@@ -1,3 +1,4 @@
+#include "net/minecraft/src/UiStrings.h"
 #include "GuiMainMenu.h"
 #include "platform/Log.h"
 #include "platform/PlatformConfig.h"
