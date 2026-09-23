@@ -10,6 +10,7 @@
 #include "SoundManager.h"
 #include "Tessellator.h"
 #include "platform/RenderAPI.h"
+#include "platform/PlatformCompat.h"
 
 #include "pc/lwjgl/Keyboard.h"
 
@@ -19,6 +20,7 @@
 
 #ifdef PS2_PLATFORM
 #include "ps2/input/Ps2PadState.h"
+#include "ps2/input/Ps2PadKeyCodes.h"
 #endif
 
 #include <algorithm>
@@ -63,9 +65,6 @@ GuiSkinSelector::GuiSkinSelector(GuiScreen *parent)
     , nameplateHeight(0)
     , buttonTabDefault(nullptr)
     , buttonTabCustom(nullptr)
-    , buttonPrevSkin(nullptr)
-    , buttonNextSkin(nullptr)
-    , buttonConfirm(nullptr)
     , buttonPlayer2Skin(nullptr)
     , buttonLoadSkins(nullptr)
     , buttonDeleteSkin(nullptr)
@@ -74,6 +73,7 @@ GuiSkinSelector::GuiSkinSelector(GuiScreen *parent)
     , stickNavLatched(false)
     , dpadRepeatTimer(0)
     , stickRepeatTimer(0)
+    , lastPadHeld(0)
 #endif
 {
     SkinManager::init();
@@ -142,12 +142,6 @@ void GuiSkinSelector::initGui()
     {
         buttonTabCustom = nullptr;
     }
-
-    // Carousel buttons < and >
-    buttonPrevSkin = new GuiButton(BUTTON_ID_PREV_SKIN, rightPanelX + 6, carouselGroundY - 45, 18, 20, "<");
-    buttonNextSkin = new GuiButton(BUTTON_ID_NEXT_SKIN, rightPanelX + rightPanelWidth - 24, carouselGroundY - 45, 18, 20, ">");
-    controlList.push_back(buttonPrevSkin);
-    controlList.push_back(buttonNextSkin);
 
     // Bottom action buttons
     const int_t btnY = dialogTop + dialogHeight + 4;
@@ -233,23 +227,20 @@ void GuiSkinSelector::handleSpecializedMenuInput()
         return;
 
 #if PLATFORM_PS2
-    std::uint32_t pressed = pad.pressed;
-    if (ps2ActionReleaseLatch)
-    {
-        pressed &= ~PLATFORM_TEXT_TYPE;
-        if ((pad.held & PLATFORM_TEXT_TYPE) == 0)
-            ps2ActionReleaseLatch = false;
-    }
+    const Ps2PadSnapshot &ps2Pad = ps2PadGetSnapshot(platformMenuPad());
+    const unsigned short held = ps2Pad.held;
+    const unsigned short pressed = held & ~lastPadHeld;
+    lastPadHeld = held;
 
-    // Cancel / Return (Circle)
-    if ((pressed & PLATFORM_TEXT_CLOSE) != 0)
+    // Circle: Cancel / Return
+    if ((pressed & PS2_PAD_CIRCLE) != 0)
     {
         cancelAndReturn();
         return;
     }
 
     // Triangle: Open Load Skins screen
-    if ((pressed & PLATFORM_TEXT_SHIFT) != 0)
+    if ((pressed & PS2_PAD_TRIANGLE) != 0)
     {
         if (mc != nullptr && mc->sndManager != nullptr)
             mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
@@ -258,7 +249,7 @@ void GuiSkinSelector::handleSpecializedMenuInput()
     }
 
     // Square: Delete current custom skin (when on custom pack)
-    if ((pressed & PLATFORM_TEXT_BACK) != 0)
+    if ((pressed & PS2_PAD_SQUARE) != 0)
     {
         if (currentPackIndex == 1)
         {
@@ -267,43 +258,38 @@ void GuiSkinSelector::handleSpecializedMenuInput()
         }
     }
 
-    // L1 / R1 or D-Pad Up / Down: Switch between skin packs
-    const Ps2PadSnapshot &ps2Pad = ps2PadGetSnapshot(platformMenuPad());
-    const Ps2PadSnapshot &primaryPad = ps2PadGetSnapshot(0);
-    bool triggerPackSwitch = false;
-    if ((ps2Pad.pressed & (PS2_PAD_L1 | PS2_PAD_R1)) != 0 || (primaryPad.pressed & (PS2_PAD_L1 | PS2_PAD_R1)) != 0)
-        triggerPackSwitch = true;
-    else if ((pressed & (PLATFORM_TEXT_UP | PLATFORM_TEXT_DOWN)) != 0)
-        triggerPackSwitch = true;
-
-    if (triggerPackSwitch && SkinManager::getPackCount() > 1)
+    // L2 / R2: Switch between skin packs (tabs)
+    if ((pressed & (PS2_PAD_L2 | PS2_PAD_R2)) != 0)
     {
-        switchPack(1 - currentPackIndex);
-        return;
+        if (SkinManager::getPackCount() > 1)
+        {
+            switchPack(1 - currentPackIndex);
+            return;
+        }
     }
 
-    // D-Pad navigation with initial edge + repeat on hold
+    // L1 / R1 or D-Pad Left / Right: Navigate carousel skins
     bool movedLeft = false;
     bool movedRight = false;
 
-    if ((pressed & PLATFORM_TEXT_LEFT) != 0)
+    if ((pressed & (PS2_PAD_L1 | PS2_PAD_LEFT)) != 0)
     {
         movedLeft = true;
         dpadRepeatTimer = 0;
     }
-    else if ((pad.held & PLATFORM_TEXT_LEFT) != 0)
+    else if ((held & (PS2_PAD_L1 | PS2_PAD_LEFT)) != 0)
     {
         dpadRepeatTimer++;
         if (dpadRepeatTimer > 15 && (dpadRepeatTimer % 5) == 0)
             movedLeft = true;
     }
 
-    if ((pressed & PLATFORM_TEXT_RIGHT) != 0)
+    if ((pressed & (PS2_PAD_R1 | PS2_PAD_RIGHT)) != 0)
     {
         movedRight = true;
         dpadRepeatTimer = 0;
     }
-    else if ((pad.held & PLATFORM_TEXT_RIGHT) != 0)
+    else if ((held & (PS2_PAD_R1 | PS2_PAD_RIGHT)) != 0)
     {
         dpadRepeatTimer++;
         if (dpadRepeatTimer > 15 && (dpadRepeatTimer % 5) == 0)
@@ -313,48 +299,28 @@ void GuiSkinSelector::handleSpecializedMenuInput()
     if (movedLeft) prevSkin();
     if (movedRight) nextSkin();
 
-    // Analog stick horizontal carousel navigation
-    const PlatformGamepadSnapshot stick = platformGamepadSnapshot(platformMenuPad());
-    constexpr float kStickThreshold = 0.50f;
-    constexpr float kStickRelease = 0.25f;
-
-    if (stick.leftX > -kStickRelease && stick.leftX < kStickRelease)
+    // Confirm selection (Cross) - ONLY when pointer is NOT hovering over an active GUI button
+    if ((pressed & PS2_PAD_CROSS) != 0)
     {
-        stickNavLatched = false;
-        stickRepeatTimer = 0;
-    }
-    else if (!stickNavLatched)
-    {
-        if (stick.leftX < -kStickThreshold)
+        int mx = 0, my = 0;
+        PlatformCompat::getMouseState(&mx, &my);
+        int mouseX = (mc != nullptr && mc->displayWidth > 0) ? (mx * width) / mc->displayWidth : 0;
+        int mouseY = (mc != nullptr && mc->displayHeight > 0) ? (my * height) / mc->displayHeight : 0;
+        bool overButton = false;
+        for (GuiButton *btn : controlList)
         {
-            prevSkin();
-            stickNavLatched = true;
-            stickRepeatTimer = 0;
+            if (btn != nullptr && btn->enabled && btn->mousePressed(mc, mouseX, mouseY))
+            {
+                overButton = true;
+                break;
+            }
         }
-        else if (stick.leftX > kStickThreshold)
+        if (!overButton)
         {
-            nextSkin();
-            stickNavLatched = true;
-            stickRepeatTimer = 0;
+            while (lwjgl::Mouse::next()) {}
+            selectAndConfirm();
+            return;
         }
-    }
-    else
-    {
-        stickRepeatTimer++;
-        if (stickRepeatTimer > 18 && (stickRepeatTimer % 6) == 0)
-        {
-            if (stick.leftX < -kStickThreshold)
-                prevSkin();
-            else if (stick.leftX > kStickThreshold)
-                nextSkin();
-        }
-    }
-
-    // Confirm selection (Cross)
-    if ((pressed & PLATFORM_TEXT_TYPE) != 0)
-    {
-        selectAndConfirm();
-        return;
     }
 
 #elif PLATFORM_WII
@@ -389,20 +355,18 @@ void GuiSkinSelector::updateScreen()
 {
     GuiScreen::updateScreen();
 
-    // Smooth return to center
-    if (std::abs(scrollOffset) > 0.01f)
+    // Smoothly dampen carousel scrolling transition
+    if (std::fabs(scrollOffset) > 0.001f)
     {
         scrollOffset *= 0.65f;
-    }
-    else
-    {
-        scrollOffset = 0.0f;
+        if (std::fabs(scrollOffset) < 0.002f)
+            scrollOffset = 0.0f;
     }
 }
 
 void GuiSkinSelector::keyTyped(char_t c, int_t key)
 {
-    if (key == 1) // ESC
+    if (key == 1 || key == lwjgl::Keyboard::KEY_ESCAPE) // ESC
     {
         cancelAndReturn();
         return;
@@ -412,23 +376,58 @@ void GuiSkinSelector::keyTyped(char_t c, int_t key)
         selectAndConfirm();
         return;
     }
+
+    // L1 or Left arrow or A: Previous skin
+#ifdef PS2_PLATFORM
+    if (key == PS2_KEY_L1 || key == lwjgl::Keyboard::KEY_LEFT || key == lwjgl::Keyboard::KEY_A)
+#else
     if (key == lwjgl::Keyboard::KEY_LEFT || key == lwjgl::Keyboard::KEY_A)
+#endif
     {
         prevSkin();
         return;
     }
+
+    // R1 or Right arrow or D: Next skin
+#ifdef PS2_PLATFORM
+    if (key == PS2_KEY_R1 || key == lwjgl::Keyboard::KEY_RIGHT || key == lwjgl::Keyboard::KEY_D)
+#else
     if (key == lwjgl::Keyboard::KEY_RIGHT || key == lwjgl::Keyboard::KEY_D)
+#endif
     {
         nextSkin();
         return;
     }
+
+    // L2 / R2 or Tab: Switch pack/tab
+#ifdef PS2_PLATFORM
+    if (key == PS2_KEY_L2 || key == PS2_KEY_R2 || key == lwjgl::Keyboard::KEY_TAB)
+#else
     if (key == lwjgl::Keyboard::KEY_TAB)
+#endif
     {
         if (SkinManager::getPackCount() > 1)
             switchPack(1 - currentPackIndex);
         return;
     }
+
+    // Triangle: Open Load Skins
+#ifdef PS2_PLATFORM
+    if (key == PS2_KEY_TRIANGLE)
+    {
+        if (mc != nullptr && mc->sndManager != nullptr)
+            mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
+        mc->displayGuiScreen(new GuiLoadSkinsMenu(this));
+        return;
+    }
+#endif
+
+    // Square or Delete: Delete current custom skin
+#ifdef PS2_PLATFORM
+    if (key == PS2_KEY_SQUARE || key == lwjgl::Keyboard::KEY_DELETE)
+#else
     if (key == lwjgl::Keyboard::KEY_DELETE)
+#endif
     {
         deleteCurrentCustomSkin();
         return;
@@ -444,7 +443,9 @@ void GuiSkinSelector::nextSkin()
         return;
 
     currentSkinIndex = (currentSkinIndex + 1) % total;
-    scrollOffset = -0.5f;
+    scrollOffset -= 1.0f;
+    if (scrollOffset < -1.5f)
+        scrollOffset = -1.5f;
 
     if (mc != nullptr && mc->sndManager != nullptr)
         mc->sndManager->playSoundFX("random.click", 1.0f, 1.2f);
@@ -457,10 +458,12 @@ void GuiSkinSelector::prevSkin()
         return;
 
     currentSkinIndex = ((currentSkinIndex - 1) % total + total) % total;
-    scrollOffset = 0.5f;
+    scrollOffset += 1.0f;
+    if (scrollOffset > 1.5f)
+        scrollOffset = 1.5f;
 
     if (mc != nullptr && mc->sndManager != nullptr)
-        mc->sndManager->playSoundFX("random.click", 1.0f, 0.9f);
+        mc->sndManager->playSoundFX("random.click", 1.0f, 1.2f);
 }
 
 void GuiSkinSelector::selectAndConfirm()
@@ -502,6 +505,13 @@ void GuiSkinSelector::mouseClicked(int_t mouseX, int_t mouseY, int_t button)
 
     if (button != 0)
         return;
+
+    // If an active button was clicked, don't trigger carousel actions
+    for (GuiButton *btn : controlList)
+    {
+        if (btn != nullptr && btn->enabled && btn->mousePressed(mc, mouseX, mouseY))
+            return;
+    }
 
     // Click on nameplate confirms
     if (mouseY >= nameplateY && mouseY <= nameplateY + nameplateHeight &&
@@ -548,14 +558,6 @@ void GuiSkinSelector::actionPerformed(GuiButton *button)
     else if (button->id == BUTTON_ID_TAB_CUSTOM)
     {
         switchPack(1);
-    }
-    else if (button->id == BUTTON_ID_PREV_SKIN)
-    {
-        prevSkin();
-    }
-    else if (button->id == BUTTON_ID_NEXT_SKIN)
-    {
-        nextSkin();
     }
     else if (button->id == BUTTON_ID_LOAD_SKINS)
     {
@@ -788,39 +790,42 @@ void GuiSkinSelector::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick
         fontRenderer->drawStringWithShadow(countStr, rightX2 - countW - 10, rightY1 + 5, 0xAAAAAA);
     }
 
-    // 4. Draw carousel 5 skins: -2, -1, 0, +1, +2
+    // 4. Infinite Carousel Area
     if (totalSkins > 0)
     {
-        struct SlotConfig { int offset; float scale; float alpha; };
-        const SlotConfig slots[5] = {
-            { -2, 0.45f, 0.35f },
-            { -1, 0.70f, 0.70f },
-            {  0, 1.00f, 1.00f },
-            {  1, 0.70f, 0.70f },
-            {  2, 0.45f, 0.35f },
-        };
+        const float spacing = static_cast<float>(rightPanelWidth) * 0.22f;
 
-        const float spacing = 46.0f;
-        const float baseW = 34.0f;
-        const float baseH = 68.0f;
-
-        for (const auto &cfg : slots)
+        // Render slots from k = 3 down to -3 (so center skin renders on top of flanking ones)
+        const int slotOrder[] = { -3, 3, -2, 2, -1, 1, 0 };
+        for (int k : slotOrder)
         {
-            const int skinIndex = ((currentSkinIndex + cfg.offset) % totalSkins + totalSkins) % totalSkins;
+            float t = static_cast<float>(k) - scrollOffset;
+            float dist = std::fabs(t);
+            if (dist > 2.6f)
+                continue;
+
+            int skinIndex = ((currentSkinIndex + k) % totalSkins + totalSkins) % totalSkins;
             const SkinEntry *skin = SkinManager::getSkin(currentPackIndex, skinIndex);
             if (skin == nullptr)
                 continue;
 
-            float t = static_cast<float>(cfg.offset) + scrollOffset;
-            float skinW = baseW * cfg.scale;
-            float skinH = baseH * cfg.scale;
-            float skinX = static_cast<float>(carouselCenterX) + t * spacing - skinW / 2.0f;
+            // Scale factor based on distance from center
+            float scale = 3.4f - 1.05f * std::min(dist, 2.0f);
+            if (scale < 1.0f) scale = 1.0f;
+
+            float alpha = 1.0f - 0.20f * std::min(dist, 2.0f);
+            if (alpha < 0.35f) alpha = 0.35f;
+
+            float skinW = 16.0f * scale;
+            float skinH = 32.0f * scale;
+            float skinX = static_cast<float>(carouselCenterX) + t * spacing - skinW * 0.5f;
             float skinY = static_cast<float>(carouselGroundY) - skinH;
-            float alpha = cfg.alpha;
 
+            // Draw soft ground shadow
             drawFeetShadow(static_cast<float>(carouselCenterX) + t * spacing, static_cast<float>(carouselGroundY),
-                           skinW * 0.45f, 3.5f, alpha);
+                           skinW * 0.45f, 4.0f, alpha);
 
+            // Draw front preview
             drawFrontPreview(skin, skinX, skinY, skinW, skinH, alpha);
         }
     }
@@ -842,13 +847,13 @@ void GuiSkinSelector::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick
     // 6. Footer Controller Legend
     const int_t footerY = height - 13;
 #if PLATFORM_PS2
-    std::string hint = "[X] Select   [O] Back   [L1/R1] Tab   [/\\ ] Load";
+    std::string hint = "[X] Select   [O] Back   [/\\ ] Load   [L1/R1] Skin   [L2/R2] Tab";
     if (currentPackIndex == 1)
         hint += "   [ ] Delete";
 #elif PLATFORM_WII
-    std::string hint = "[A] Select   [B] Back   [L/R] Tab   [D-Pad] Navigate";
+    std::string hint = "[A] Select   [B] Back   [L/R] Skin   [ZL/ZR] Tab";
 #else
-    std::string hint = "[Enter] Select   [Esc] Back   [Tab] Switch Pack";
+    std::string hint = "[Enter] Select   [Esc] Back   [< / >] Skin   [Tab] Tab";
 #endif
     fontRenderer->drawStringWithShadow(hint, dialogLeft, footerY, 0xC0C0C0);
 

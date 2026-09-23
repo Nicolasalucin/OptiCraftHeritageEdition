@@ -238,8 +238,18 @@ void updateMenu(const Ps2PadSnapshot& primary, bool specializedMenuNavigation) {
     }
     if (!specializedMenuNavigation)
     {
-        if (p.pressed & (PAD_CIRCLE | PAD_TRIANGLE)) lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_ESCAPE, true);
-        if (p.released & (PAD_CIRCLE | PAD_TRIANGLE)) lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_ESCAPE, false);
+        if (p.pressed & PAD_CIRCLE) lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_ESCAPE, true);
+        if (p.released & PAD_CIRCLE) lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_ESCAPE, false);
+        if (p.pressed & PAD_TRIANGLE) lwjgl::Keyboard::detail::pushKey(PS2_KEY_TRIANGLE, true);
+        if (p.released & PAD_TRIANGLE) lwjgl::Keyboard::detail::pushKey(PS2_KEY_TRIANGLE, false);
+        if (p.pressed & PAD_L1) lwjgl::Keyboard::detail::pushKey(PS2_KEY_L1, true);
+        if (p.released & PAD_L1) lwjgl::Keyboard::detail::pushKey(PS2_KEY_L1, false);
+        if (p.pressed & PAD_R1) lwjgl::Keyboard::detail::pushKey(PS2_KEY_R1, true);
+        if (p.released & PAD_R1) lwjgl::Keyboard::detail::pushKey(PS2_KEY_R1, false);
+        if (p.pressed & PAD_L2) lwjgl::Keyboard::detail::pushKey(PS2_KEY_L2, true);
+        if (p.released & PAD_L2) lwjgl::Keyboard::detail::pushKey(PS2_KEY_L2, false);
+        if (p.pressed & PAD_R2) lwjgl::Keyboard::detail::pushKey(PS2_KEY_R2, true);
+        if (p.released & PAD_R2) lwjgl::Keyboard::detail::pushKey(PS2_KEY_R2, false);
         if (p.pressed & PAD_START) lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_RETURN, true);
         if (p.released & PAD_START) lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_RETURN, false);
     }

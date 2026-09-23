@@ -60,9 +60,6 @@ private:
     // Interactive GUI buttons
     GuiButton *buttonTabDefault;
     GuiButton *buttonTabCustom;
-    GuiButton *buttonPrevSkin;
-    GuiButton *buttonNextSkin;
-    GuiButton *buttonConfirm;
     GuiButton *buttonPlayer2Skin;
     GuiButton *buttonLoadSkins;
     GuiButton *buttonDeleteSkin;
@@ -72,5 +69,6 @@ private:
     bool stickNavLatched;
     int dpadRepeatTimer;
     int stickRepeatTimer;
+    unsigned short lastPadHeld;
 #endif
 };
