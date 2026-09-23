@@ -21,6 +21,7 @@
 #ifdef PS2_PLATFORM
 #include "ps2/input/Ps2PadState.h"
 #include "ps2/input/Ps2PadKeyCodes.h"
+#include "legacy/LegacyButtonPrompt.h"
 #endif
 
 #include <algorithm>
@@ -830,15 +831,37 @@ void GuiSkinSelector::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick
     // 6. Footer Controller Legend
     const int_t footerY = height - 13;
 #if PLATFORM_PS2
-    std::string hint = "[X] Select   [O] Back   [/\\ ] Load   [L1/R1] Skin   [L2/R2] Tab";
-    if (currentPackIndex == 1)
-        hint += "   [ ] Delete";
+    RenderEngine *renderEngine = mc ? mc->renderEngine : nullptr;
+    if (renderEngine != nullptr)
+    {
+        const int_t gap = 10;
+        int_t curX = dialogLeft;
+
+        curX += LegacyButtonPrompt::drawPrompt(renderEngine, fontRenderer, Ps2ButtonIcon::Cross, "Select", curX, footerY, 11, 0xE0E0E0) + gap;
+        curX += LegacyButtonPrompt::drawPrompt(renderEngine, fontRenderer, Ps2ButtonIcon::Circle, "Back", curX, footerY, 11, 0xE0E0E0) + gap;
+        curX += LegacyButtonPrompt::drawPrompt(renderEngine, fontRenderer, Ps2ButtonIcon::Triangle, "Load", curX, footerY, 11, 0xE0E0E0) + gap;
+        curX += LegacyButtonPrompt::drawTwoButtonPrompt(renderEngine, fontRenderer, Ps2ButtonIcon::L1, Ps2ButtonIcon::R1, "Skin", curX, footerY, 11, 0xE0E0E0) + gap;
+        curX += LegacyButtonPrompt::drawTwoButtonPrompt(renderEngine, fontRenderer, Ps2ButtonIcon::L2, Ps2ButtonIcon::R2, "Tab", curX, footerY, 11, 0xE0E0E0);
+        if (currentPackIndex == 1)
+        {
+            curX += gap;
+            LegacyButtonPrompt::drawPrompt(renderEngine, fontRenderer, Ps2ButtonIcon::Square, "Delete", curX, footerY, 11, 0xE0E0E0);
+        }
+    }
+    else
+    {
+        std::string hint = "[X] Select   [O] Back   [/\\ ] Load   [L1/R1] Skin   [L2/R2] Tab";
+        if (currentPackIndex == 1)
+            hint += "   [ ] Delete";
+        fontRenderer->drawStringWithShadow(hint, dialogLeft, footerY, 0xC0C0C0);
+    }
 #elif PLATFORM_WII
     std::string hint = "[A] Select   [B] Back   [L/R] Skin   [ZL/ZR] Tab";
+    fontRenderer->drawStringWithShadow(hint, dialogLeft, footerY, 0xC0C0C0);
 #else
     std::string hint = "[Enter] Select   [Esc] Back   [< / >] Skin   [Tab] Tab";
-#endif
     fontRenderer->drawStringWithShadow(hint, dialogLeft, footerY, 0xC0C0C0);
+#endif
 
     // 7. Draw standard GUI controls (buttons, tabs, arrows) AND the software cursor
     GuiScreen::drawScreen(mouseX, mouseY, partialTick);
