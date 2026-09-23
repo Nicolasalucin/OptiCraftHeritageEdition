@@ -52,6 +52,8 @@ static std::string normalizedTexturePath(const std::string &name)
 		path.erase(0, 6);
 	else if (path.rfind("##", 0) == 0)
 		path.erase(0, 2);
+	if (path.find(':') != std::string::npos || path.rfind("./", 0) == 0)
+		return path;
 	if (!path.empty() && path[0] != '/')
 		path.insert(path.begin(), '/');
 	return path;
@@ -419,6 +421,8 @@ bool RenderEngine::loadTextureStreamInto(const std::string &s, int_t texture, st
 bool RenderEngine::shouldLoadTextureAsync(const std::string &s) const
 {
 #if PLATFORM_PS2
+	if (s.find(':') != std::string::npos || s.rfind("./", 0) == 0)
+		return false;
 	if (!backgroundTextureLoadingEnabled || Ps2Assets::source() != Ps2Assets::Source::UsbMass)
 		return false;
 

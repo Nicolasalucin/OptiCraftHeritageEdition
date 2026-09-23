@@ -27,6 +27,10 @@
 
 namespace
 {
+constexpr int_t BUTTON_ID_TAB_DEFAULT = 1;
+constexpr int_t BUTTON_ID_TAB_CUSTOM = 2;
+constexpr int_t BUTTON_ID_PREV_SKIN = 3;
+constexpr int_t BUTTON_ID_NEXT_SKIN = 4;
 constexpr int_t BUTTON_ID_PLAYER2 = 10;
 constexpr int_t BUTTON_ID_LOAD_SKINS = 11;
 constexpr int_t BUTTON_ID_DELETE_SKIN = 12;
@@ -42,6 +46,7 @@ std::string toUpperString(const std::string &str)
 
 GuiSkinSelector::GuiSkinSelector(GuiScreen *parent)
     : parentScreen(parent)
+    , initializedSelection(false)
     , currentPackIndex(0)
     , currentSkinIndex(0)
     , scrollOffset(0.0f)
@@ -56,10 +61,11 @@ GuiSkinSelector::GuiSkinSelector(GuiScreen *parent)
     , carouselGroundY(0)
     , nameplateY(0)
     , nameplateHeight(0)
-    , tabDefaultTop(0)
-    , tabDefaultBottom(0)
-    , tabCustomTop(0)
-    , tabCustomBottom(0)
+    , buttonTabDefault(nullptr)
+    , buttonTabCustom(nullptr)
+    , buttonPrevSkin(nullptr)
+    , buttonNextSkin(nullptr)
+    , buttonConfirm(nullptr)
     , buttonPlayer2Skin(nullptr)
     , buttonLoadSkins(nullptr)
     , buttonDeleteSkin(nullptr)
@@ -79,57 +85,94 @@ void GuiSkinSelector::initGui()
 {
     controlList.clear();
 
-    if (mc != nullptr && mc->gameSettings != nullptr && !mc->gameSettings->selectedSkin.empty())
+    if (!initializedSelection)
     {
-        SkinManager::setSelectedSkinId(mc->gameSettings->selectedSkin);
-        currentPackIndex = SkinManager::getSelectedPackIndex();
-        currentSkinIndex = SkinManager::getSelectedIndex();
+        if (mc != nullptr && mc->gameSettings != nullptr && !mc->gameSettings->selectedSkin.empty())
+        {
+            SkinManager::setSelectedSkinId(mc->gameSettings->selectedSkin);
+            currentPackIndex = SkinManager::getSelectedPackIndex();
+            currentSkinIndex = SkinManager::getSelectedIndex();
+        }
+        initializedSelection = true;
+    }
+
+    if (currentPackIndex >= SkinManager::getPackCount())
+        currentPackIndex = 0;
+
+    const int totalInPack = SkinManager::getSkinCountForPack(currentPackIndex);
+    if (totalInPack > 0)
+    {
+        if (currentSkinIndex < 0 || currentSkinIndex >= totalInPack)
+            currentSkinIndex = 0;
     }
 
     // Dialog layout sizing
-    dialogWidth = std::min<int_t>(width - 24, 380);
-    dialogHeight = std::min<int_t>(height - 40, 206);
+    dialogWidth = std::min<int_t>(width - 16, 384);
+    dialogHeight = std::min<int_t>(height - 48, 172);
     dialogLeft = (width - dialogWidth) / 2;
-    dialogTop = (height - 20 - dialogHeight) / 2;
+    dialogTop = 12;
 
     leftPanelWidth = dialogWidth * 30 / 100;
     rightPanelX = dialogLeft + leftPanelWidth + 4;
     rightPanelWidth = dialogWidth - leftPanelWidth - 4;
 
     carouselCenterX = rightPanelX + rightPanelWidth / 2;
-    nameplateHeight = 28;
-    nameplateY = dialogTop + dialogHeight - nameplateHeight - 10;
-    carouselGroundY = nameplateY - 8;
+    nameplateHeight = 20;
+    nameplateY = dialogTop + dialogHeight - nameplateHeight - 8;
+    carouselGroundY = nameplateY - 6;
 
-    // Tabs vertical placement in left panel
-    tabDefaultTop = dialogTop + 96;
-    tabDefaultBottom = tabDefaultTop + 24;
-    tabCustomTop = tabDefaultBottom + 6;
-    tabCustomBottom = tabCustomTop + 24;
+    // Tabs in left panel (placed below pack cover art)
+    const int_t packBtnX = dialogLeft + 6;
+    const int_t packBtnW = leftPanelWidth - 12;
+    const int_t tabY = dialogTop + 78;
+
+    std::string defLabel = (currentPackIndex == 0) ? "> Default Skins <" : "Default Skins";
+    buttonTabDefault = new GuiButton(BUTTON_ID_TAB_DEFAULT, packBtnX, tabY, packBtnW, 18, defLabel);
+    controlList.push_back(buttonTabDefault);
+
+    if (SkinManager::getPackCount() > 1)
+    {
+        std::string customLabel = "Custom (" + std::to_string(SkinManager::getSkinCountForPack(1)) + ")";
+        if (currentPackIndex == 1)
+            customLabel = "> " + customLabel + " <";
+        buttonTabCustom = new GuiButton(BUTTON_ID_TAB_CUSTOM, packBtnX, tabY + 22, packBtnW, 18, customLabel);
+        controlList.push_back(buttonTabCustom);
+    }
+    else
+    {
+        buttonTabCustom = nullptr;
+    }
+
+    // Carousel buttons < and >
+    buttonPrevSkin = new GuiButton(BUTTON_ID_PREV_SKIN, rightPanelX + 6, carouselGroundY - 45, 18, 20, "<");
+    buttonNextSkin = new GuiButton(BUTTON_ID_NEXT_SKIN, rightPanelX + rightPanelWidth - 24, carouselGroundY - 45, 18, 20, ">");
+    controlList.push_back(buttonPrevSkin);
+    controlList.push_back(buttonNextSkin);
 
     // Bottom action buttons
+    const int_t btnY = dialogTop + dialogHeight + 4;
     const int_t p2BtnWidth = 135;
     const int_t p2BtnHeight = 18;
-    const int_t p2BtnX = width - p2BtnWidth - 8;
-    const int_t p2BtnY = height - p2BtnHeight - 4;
+    const int_t p2BtnX = dialogLeft + dialogWidth - p2BtnWidth;
 
-    buttonPlayer2Skin = new GuiButton(BUTTON_ID_PLAYER2, p2BtnX, p2BtnY, p2BtnWidth, p2BtnHeight, "Choose 2nd Player Skin");
-    buttonPlayer2Skin->enabled = false; // Disabled (grayed out) temporarily
+    buttonPlayer2Skin = new GuiButton(BUTTON_ID_PLAYER2, p2BtnX, btnY, p2BtnWidth, p2BtnHeight, "Choose 2nd Player Skin");
+    buttonPlayer2Skin->enabled = false;
     controlList.push_back(buttonPlayer2Skin);
 
-    // Functional "Load Skins" button to the left of Player 2 button as requested
-    const int_t loadBtnWidth = 90;
-    const int_t loadBtnX = p2BtnX - loadBtnWidth - 6;
-    buttonLoadSkins = new GuiButton(BUTTON_ID_LOAD_SKINS, loadBtnX, p2BtnY, loadBtnWidth, p2BtnHeight, "Load Skins");
+    const int_t loadBtnWidth = 85;
+    const int_t loadBtnX = p2BtnX - loadBtnWidth - 5;
+    buttonLoadSkins = new GuiButton(BUTTON_ID_LOAD_SKINS, loadBtnX, btnY, loadBtnWidth, p2BtnHeight, "Load Skins");
     controlList.push_back(buttonLoadSkins);
 
-    // "Delete Skin" button (visible when on custom pack)
     if (currentPackIndex == 1 && !SkinManager::getCustomSkins().empty())
     {
         const int_t delBtnWidth = 85;
-        const int_t delBtnX = dialogLeft + 4;
-        buttonDeleteSkin = new GuiButton(BUTTON_ID_DELETE_SKIN, delBtnX, p2BtnY, delBtnWidth, p2BtnHeight, "Delete Skin");
+        buttonDeleteSkin = new GuiButton(BUTTON_ID_DELETE_SKIN, dialogLeft, btnY, delBtnWidth, p2BtnHeight, "Delete Skin");
         controlList.push_back(buttonDeleteSkin);
+    }
+    else
+    {
+        buttonDeleteSkin = nullptr;
     }
 }
 
@@ -226,8 +269,9 @@ void GuiSkinSelector::handleSpecializedMenuInput()
 
     // L1 / R1 or D-Pad Up / Down: Switch between skin packs
     const Ps2PadSnapshot &ps2Pad = ps2PadGetSnapshot(platformMenuPad());
+    const Ps2PadSnapshot &primaryPad = ps2PadGetSnapshot(0);
     bool triggerPackSwitch = false;
-    if ((ps2Pad.pressed & (PS2_PAD_L1 | PS2_PAD_R1)) != 0)
+    if ((ps2Pad.pressed & (PS2_PAD_L1 | PS2_PAD_R1)) != 0 || (primaryPad.pressed & (PS2_PAD_L1 | PS2_PAD_R1)) != 0)
         triggerPackSwitch = true;
     else if ((pressed & (PLATFORM_TEXT_UP | PLATFORM_TEXT_DOWN)) != 0)
         triggerPackSwitch = true;
@@ -250,10 +294,11 @@ void GuiSkinSelector::handleSpecializedMenuInput()
     else if ((pad.held & PLATFORM_TEXT_LEFT) != 0)
     {
         dpadRepeatTimer++;
-        if (dpadRepeatTimer >= 16 && (dpadRepeatTimer % 5 == 0))
+        if (dpadRepeatTimer > 15 && (dpadRepeatTimer % 5) == 0)
             movedLeft = true;
     }
-    else if ((pressed & PLATFORM_TEXT_RIGHT) != 0)
+
+    if ((pressed & PLATFORM_TEXT_RIGHT) != 0)
     {
         movedRight = true;
         dpadRepeatTimer = 0;
@@ -261,79 +306,81 @@ void GuiSkinSelector::handleSpecializedMenuInput()
     else if ((pad.held & PLATFORM_TEXT_RIGHT) != 0)
     {
         dpadRepeatTimer++;
-        if (dpadRepeatTimer >= 16 && (dpadRepeatTimer % 5 == 0))
+        if (dpadRepeatTimer > 15 && (dpadRepeatTimer % 5) == 0)
             movedRight = true;
+    }
+
+    if (movedLeft) prevSkin();
+    if (movedRight) nextSkin();
+
+    // Analog stick horizontal carousel navigation
+    const PlatformGamepadSnapshot stick = platformGamepadSnapshot(platformMenuPad());
+    constexpr float kStickThreshold = 0.50f;
+    constexpr float kStickRelease = 0.25f;
+
+    if (stick.leftX > -kStickRelease && stick.leftX < kStickRelease)
+    {
+        stickNavLatched = false;
+        stickRepeatTimer = 0;
+    }
+    else if (!stickNavLatched)
+    {
+        if (stick.leftX < -kStickThreshold)
+        {
+            prevSkin();
+            stickNavLatched = true;
+            stickRepeatTimer = 0;
+        }
+        else if (stick.leftX > kStickThreshold)
+        {
+            nextSkin();
+            stickNavLatched = true;
+            stickRepeatTimer = 0;
+        }
     }
     else
     {
-        dpadRepeatTimer = 0;
-    }
-
-    // Left analog stick navigation (deadzone + latch + repeat)
-    if (!movedLeft && !movedRight)
-    {
-        const PlatformGamepadSnapshot stick = platformGamepadSnapshot(platformMenuPad());
-        if (stick.connected)
+        stickRepeatTimer++;
+        if (stickRepeatTimer > 18 && (stickRepeatTimer % 6) == 0)
         {
-            if (stick.leftX < -0.55f)
-            {
-                if (!stickNavLatched)
-                {
-                    movedLeft = true;
-                    stickNavLatched = true;
-                    stickRepeatTimer = 0;
-                }
-                else
-                {
-                    stickRepeatTimer++;
-                    if (stickRepeatTimer >= 16 && (stickRepeatTimer % 5 == 0))
-                        movedLeft = true;
-                }
-            }
-            else if (stick.leftX > 0.55f)
-            {
-                if (!stickNavLatched)
-                {
-                    movedRight = true;
-                    stickNavLatched = true;
-                    stickRepeatTimer = 0;
-                }
-                else
-                {
-                    stickRepeatTimer++;
-                    if (stickRepeatTimer >= 16 && (stickRepeatTimer % 5 == 0))
-                        movedRight = true;
-                }
-            }
-            else
-            {
-                stickNavLatched = false;
-                stickRepeatTimer = 0;
-            }
+            if (stick.leftX < -kStickThreshold)
+                prevSkin();
+            else if (stick.leftX > kStickThreshold)
+                nextSkin();
         }
     }
 
-    if (movedLeft)
-        prevSkin();
-    else if (movedRight)
-        nextSkin();
-
-    // Cross / Confirm
+    // Confirm selection (Cross)
     if ((pressed & PLATFORM_TEXT_TYPE) != 0)
     {
         selectAndConfirm();
+        return;
     }
+
 #elif PLATFORM_WII
+    // Wii Classic Controller / GameCube / Wiimote D-Pad
+    if ((pad.pressed & (PLATFORM_TEXT_BACK | PLATFORM_TEXT_CLOSE)) != 0)
+    {
+        cancelAndReturn();
+        return;
+    }
+
     if ((pad.pressed & PLATFORM_TEXT_LEFT) != 0)
         prevSkin();
     else if ((pad.pressed & PLATFORM_TEXT_RIGHT) != 0)
         nextSkin();
+
     if ((pad.pressed & (PLATFORM_TEXT_UP | PLATFORM_TEXT_DOWN)) != 0 && SkinManager::getPackCount() > 1)
+    {
         switchPack(1 - currentPackIndex);
+        return;
+    }
+
     if ((pad.pressed & PLATFORM_TEXT_TYPE) != 0)
+    {
         selectAndConfirm();
-    if ((pad.pressed & PLATFORM_TEXT_CLOSE) != 0)
-        cancelAndReturn();
+        return;
+    }
 #endif
 #endif
 }
@@ -342,20 +389,27 @@ void GuiSkinSelector::updateScreen()
 {
     GuiScreen::updateScreen();
 
-    // Smoothly dampen carousel scrolling transition
-    if (std::fabs(scrollOffset) > 0.001f)
+    // Smooth return to center
+    if (std::abs(scrollOffset) > 0.01f)
     {
         scrollOffset *= 0.65f;
-        if (std::fabs(scrollOffset) < 0.002f)
-            scrollOffset = 0.0f;
+    }
+    else
+    {
+        scrollOffset = 0.0f;
     }
 }
 
-void GuiSkinSelector::keyTyped(char_t, int_t key)
+void GuiSkinSelector::keyTyped(char_t c, int_t key)
 {
-    if (key == lwjgl::Keyboard::KEY_ESCAPE)
+    if (key == 1) // ESC
     {
         cancelAndReturn();
+        return;
+    }
+    if (key == lwjgl::Keyboard::KEY_RETURN || key == lwjgl::Keyboard::KEY_NUMPADENTER)
+    {
+        selectAndConfirm();
         return;
     }
     if (key == lwjgl::Keyboard::KEY_LEFT || key == lwjgl::Keyboard::KEY_A)
@@ -368,9 +422,7 @@ void GuiSkinSelector::keyTyped(char_t, int_t key)
         nextSkin();
         return;
     }
-    if (key == lwjgl::Keyboard::KEY_UP || key == lwjgl::Keyboard::KEY_W ||
-        key == lwjgl::Keyboard::KEY_DOWN || key == lwjgl::Keyboard::KEY_S ||
-        key == lwjgl::Keyboard::KEY_TAB)
+    if (key == lwjgl::Keyboard::KEY_TAB)
     {
         if (SkinManager::getPackCount() > 1)
             switchPack(1 - currentPackIndex);
@@ -378,15 +430,11 @@ void GuiSkinSelector::keyTyped(char_t, int_t key)
     }
     if (key == lwjgl::Keyboard::KEY_DELETE)
     {
-        if (currentPackIndex == 1)
-            deleteCurrentCustomSkin();
+        deleteCurrentCustomSkin();
         return;
     }
-    if (key == lwjgl::Keyboard::KEY_RETURN || key == lwjgl::Keyboard::KEY_SPACE)
-    {
-        selectAndConfirm();
-        return;
-    }
+
+    GuiScreen::keyTyped(c, key);
 }
 
 void GuiSkinSelector::nextSkin()
@@ -394,10 +442,9 @@ void GuiSkinSelector::nextSkin()
     const int total = SkinManager::getSkinCountForPack(currentPackIndex);
     if (total <= 0)
         return;
+
     currentSkinIndex = (currentSkinIndex + 1) % total;
-    scrollOffset -= 1.0f;
-    if (scrollOffset < -1.5f)
-        scrollOffset = -1.5f;
+    scrollOffset = -0.5f;
 
     if (mc != nullptr && mc->sndManager != nullptr)
         mc->sndManager->playSoundFX("random.click", 1.0f, 1.2f);
@@ -408,13 +455,12 @@ void GuiSkinSelector::prevSkin()
     const int total = SkinManager::getSkinCountForPack(currentPackIndex);
     if (total <= 0)
         return;
+
     currentSkinIndex = ((currentSkinIndex - 1) % total + total) % total;
-    scrollOffset += 1.0f;
-    if (scrollOffset > 1.5f)
-        scrollOffset = 1.5f;
+    scrollOffset = 0.5f;
 
     if (mc != nullptr && mc->sndManager != nullptr)
-        mc->sndManager->playSoundFX("random.click", 1.0f, 1.2f);
+        mc->sndManager->playSoundFX("random.click", 1.0f, 0.9f);
 }
 
 void GuiSkinSelector::selectAndConfirm()
@@ -422,6 +468,7 @@ void GuiSkinSelector::selectAndConfirm()
     const SkinEntry *skin = SkinManager::getSkin(currentPackIndex, currentSkinIndex);
     if (skin != nullptr)
     {
+        SkinManager::setSelectedPackIndex(currentPackIndex);
         SkinManager::setSelectedSkinId(skin->id);
         if (mc != nullptr && mc->gameSettings != nullptr)
         {
@@ -456,46 +503,35 @@ void GuiSkinSelector::mouseClicked(int_t mouseX, int_t mouseY, int_t button)
     if (button != 0)
         return;
 
-    // Check clicks on pack tabs in left panel
-    if (mouseX >= dialogLeft + 6 && mouseX <= dialogLeft + leftPanelWidth - 6)
-    {
-        if (mouseY >= tabDefaultTop && mouseY <= tabDefaultBottom)
-        {
-            switchPack(0);
-            return;
-        }
-        if (SkinManager::getPackCount() > 1 && mouseY >= tabCustomTop && mouseY <= tabCustomBottom)
-        {
-            switchPack(1);
-            return;
-        }
-    }
-
-    // Check click inside carousel area
-    if (mouseY >= dialogTop + 24 && mouseY < nameplateY)
-    {
-        if (mouseX >= rightPanelX && mouseX < carouselCenterX - 30)
-        {
-            prevSkin();
-            return;
-        }
-        if (mouseX > carouselCenterX + 30 && mouseX <= rightPanelX + rightPanelWidth)
-        {
-            nextSkin();
-            return;
-        }
-        if (mouseX >= carouselCenterX - 30 && mouseX <= carouselCenterX + 30)
-        {
-            selectAndConfirm();
-            return;
-        }
-    }
-
-    // Check click on nameplate
+    // Click on nameplate confirms
     if (mouseY >= nameplateY && mouseY <= nameplateY + nameplateHeight &&
         mouseX >= rightPanelX && mouseX <= rightPanelX + rightPanelWidth)
     {
         selectAndConfirm();
+        return;
+    }
+
+    // Click on center character confirms
+    if (mouseX >= carouselCenterX - 25 && mouseX <= carouselCenterX + 25 &&
+        mouseY >= carouselGroundY - 75 && mouseY <= carouselGroundY)
+    {
+        selectAndConfirm();
+        return;
+    }
+
+    // Click on left skin in carousel advances to left
+    if (mouseX >= carouselCenterX - 85 && mouseX < carouselCenterX - 25 &&
+        mouseY >= carouselGroundY - 65 && mouseY <= carouselGroundY)
+    {
+        prevSkin();
+        return;
+    }
+
+    // Click on right skin in carousel advances to right
+    if (mouseX > carouselCenterX + 25 && mouseX <= carouselCenterX + 85 &&
+        mouseY >= carouselGroundY - 65 && mouseY <= carouselGroundY)
+    {
+        nextSkin();
         return;
     }
 }
@@ -505,7 +541,23 @@ void GuiSkinSelector::actionPerformed(GuiButton *button)
     if (!button->enabled)
         return;
 
-    if (button->id == BUTTON_ID_LOAD_SKINS)
+    if (button->id == BUTTON_ID_TAB_DEFAULT)
+    {
+        switchPack(0);
+    }
+    else if (button->id == BUTTON_ID_TAB_CUSTOM)
+    {
+        switchPack(1);
+    }
+    else if (button->id == BUTTON_ID_PREV_SKIN)
+    {
+        prevSkin();
+    }
+    else if (button->id == BUTTON_ID_NEXT_SKIN)
+    {
+        nextSkin();
+    }
+    else if (button->id == BUTTON_ID_LOAD_SKINS)
     {
         if (mc != nullptr && mc->sndManager != nullptr)
             mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
@@ -528,22 +580,20 @@ bool GuiSkinSelector::doesGuiPauseGame()
 
 void GuiSkinSelector::drawBeveledPanel(int_t left, int_t top, int_t right, int_t bottom, int_t fillColor)
 {
-    drawRect(left - 1, top - 1, right + 1, bottom + 1, 0xFF181818);
-    drawRect(left + 2, top + 2, right - 2, bottom - 2, fillColor);
-    drawRect(left + 1, top + 1, right - 1, top + 2, 0xFFFFFFFF);
-    drawRect(left + 1, top + 2, left + 2, bottom - 1, 0xFFFFFFFF);
-    drawRect(left + 2, bottom - 2, right - 1, bottom - 1, 0xFF7A7A7A);
-    drawRect(right - 2, top + 2, right - 1, bottom - 2, 0xFF7A7A7A);
+    drawRect(left, top, right, bottom, fillColor);
+    drawRect(left, top, right, top + 1, 0x40FFFFFF);
+    drawRect(left, top, left + 1, bottom, 0x40FFFFFF);
+    drawRect(left, bottom - 1, right, bottom, 0xFF000000);
+    drawRect(right - 1, top, right, bottom, 0xFF000000);
 }
 
 void GuiSkinSelector::drawInsetPanel(int_t left, int_t top, int_t right, int_t bottom, int_t fillColor)
 {
-    drawRect(left, top, right, bottom, 0xFF222222);
-    drawRect(left + 2, top + 2, right - 2, bottom - 2, fillColor);
-    drawRect(left + 1, top + 1, right - 1, top + 2, 0xFF666666);
-    drawRect(left + 1, top + 2, left + 2, bottom - 1, 0xFF666666);
-    drawRect(left + 2, bottom - 2, right - 1, bottom - 1, 0xFFE8E8E8);
-    drawRect(right - 2, top + 2, right - 1, bottom - 2, 0xFFE8E8E8);
+    drawRect(left, top, right, bottom, fillColor);
+    drawRect(left, top, right, top + 1, 0xFF000000);
+    drawRect(left, top, left + 1, bottom, 0xFF000000);
+    drawRect(left, bottom - 1, right, bottom, 0x30FFFFFF);
+    drawRect(right - 1, top, right, bottom, 0x30FFFFFF);
 }
 
 void GuiSkinSelector::drawFeetShadow(float centerX, float groundY, float radiusX, float radiusY, float alpha)
@@ -563,9 +613,7 @@ void GuiSkinSelector::drawFeetShadow(float centerX, float groundY, float radiusX
     int_t y2 = static_cast<int_t>(groundY + radiusY * 0.5f);
 
     drawRect(x1 + 2, y1, x2 - 2, y2, color);
-    drawRect(x1, y1 + 1, x2, y2 - 1, color);
-
-    renderEnable(RenderCapability::Texture2D);
+    renderDisable(RenderCapability::Blend);
 }
 
 void GuiSkinSelector::drawFrontPreview(const SkinEntry *skin, float x, float y, float w, float h, float alpha)
@@ -682,10 +730,6 @@ void GuiSkinSelector::drawFrontPreview(const SkinEntry *skin, float x, float y, 
     renderColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
-// ----------------------------------------------------------------------------
-// Screen Rendering
-// ----------------------------------------------------------------------------
-
 void GuiSkinSelector::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
 {
     (void)partialTick;
@@ -693,21 +737,18 @@ void GuiSkinSelector::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick
     // 1. Darkened background
     drawDefaultBackground();
 
-    const int_t panelColor = 0xFFC6C6C6;
-
-    // 2. Left Panel (Skin Pack Tabs)
+    // 2. Left Panel
     const int_t leftX1 = dialogLeft;
     const int_t leftY1 = dialogTop;
     const int_t leftX2 = dialogLeft + leftPanelWidth;
     const int_t leftY2 = dialogTop + dialogHeight;
-    drawBeveledPanel(leftX1, leftY1, leftX2, leftY2, panelColor);
+    drawInsetPanel(leftX1, leftY1, leftX2, leftY2, 0xD0101010);
 
     // Pack artwork container (square)
-    const int_t artPadding = 8;
-    const int_t artSize = std::min<int_t>(leftPanelWidth - artPadding * 2, 70);
+    const int_t artSize = std::min<int_t>(leftPanelWidth - 20, 60);
     const int_t artX = leftX1 + (leftPanelWidth - artSize) / 2;
-    const int_t artY = leftY1 + 10;
-    drawInsetPanel(artX - 2, artY - 2, artX + artSize + 2, artY + artSize + 2, 0xFF101010);
+    const int_t artY = leftY1 + 8;
+    drawInsetPanel(artX - 1, artY - 1, artX + artSize + 1, artY + artSize + 1, 0xFF000000);
 
     // Draw pack cover art
     if (mc != nullptr && mc->renderEngine != nullptr)
@@ -728,122 +769,89 @@ void GuiSkinSelector::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick
         }
     }
 
-    // Tab 1: "Default Skins"
-    const int_t packBtnX = leftX1 + 6;
-    const int_t packBtnW = leftPanelWidth - 12;
-
-    int defaultFill = (currentPackIndex == 0) ? 0xFF505050 : 0xFF9E9E9E;
-    drawInsetPanel(packBtnX, tabDefaultTop, packBtnX + packBtnW, tabDefaultBottom, defaultFill);
-    if (currentPackIndex == 0)
-        drawRect(packBtnX - 1, tabDefaultTop - 1, packBtnX + packBtnW + 1, tabDefaultBottom + 1, 0xFFFFFF00);
-    drawCenteredString(fontRenderer, "Default Skins", packBtnX + packBtnW / 2, tabDefaultTop + 7, 0xFFFFFF);
-
-    // Tab 2: "Custom Skins" (Only drawn if custom skins exist)
-    if (SkinManager::getPackCount() > 1)
-    {
-        int customFill = (currentPackIndex == 1) ? 0xFF505050 : 0xFF9E9E9E;
-        drawInsetPanel(packBtnX, tabCustomTop, packBtnX + packBtnW, tabCustomBottom, customFill);
-        if (currentPackIndex == 1)
-            drawRect(packBtnX - 1, tabCustomTop - 1, packBtnX + packBtnW + 1, tabCustomBottom + 1, 0xFFFFFF00);
-
-        std::string label = "Custom Skins (" + std::to_string(SkinManager::getSkinCountForPack(1)) + ")";
-        drawCenteredString(fontRenderer, label, packBtnX + packBtnW / 2, tabCustomTop + 7, 0xFFFFFF);
-
-        // Navigation hint at bottom of left panel
-        fontRenderer->drawString("L1/R1: Tab", leftX1 + 8, leftY2 - 16, 0x555555);
-    }
-
     // 3. Right Panel (Skin Carousel and Details)
     const int_t rightX1 = rightPanelX;
     const int_t rightY1 = dialogTop;
     const int_t rightX2 = rightPanelX + rightPanelWidth;
     const int_t rightY2 = dialogTop + dialogHeight;
-    drawBeveledPanel(rightX1, rightY1, rightX2, rightY2, panelColor);
+    drawInsetPanel(rightX1, rightY1, rightX2, rightY2, 0xD0101010);
 
-    // Top Header Banner in Right Panel
-    const int_t headerH = 18;
-    const int_t headerY = rightY1 + 5;
-    drawRect(rightX1 + 4, headerY, rightX2 - 4, headerY + headerH, 0x88242424);
-    fontRenderer->drawStringWithShadow(SkinManager::getPackName(currentPackIndex), rightX1 + 14, headerY + 5, 0xFFFFFF);
+    // Header bar inside right panel
+    drawRect(rightX1 + 1, rightY1 + 1, rightX2 - 1, rightY1 + 18, 0x80282828);
+    fontRenderer->drawStringWithShadow(SkinManager::getPackName(currentPackIndex), rightX1 + 10, rightY1 + 5, 0xFFFFFF);
 
-    // 4. Infinite Carousel Area
     const int totalSkins = SkinManager::getSkinCountForPack(currentPackIndex);
     if (totalSkins > 0)
     {
-        const float spacing = static_cast<float>(rightPanelWidth) * 0.22f;
+        std::string countStr = std::to_string(currentSkinIndex + 1) + " / " + std::to_string(totalSkins);
+        int_t countW = fontRenderer->getStringWidth(countStr);
+        fontRenderer->drawStringWithShadow(countStr, rightX2 - countW - 10, rightY1 + 5, 0xAAAAAA);
+    }
 
-        const int slotOrder[] = { -3, 3, -2, 2, -1, 1, 0 };
-        for (int k : slotOrder)
+    // 4. Draw carousel 5 skins: -2, -1, 0, +1, +2
+    if (totalSkins > 0)
+    {
+        struct SlotConfig { int offset; float scale; float alpha; };
+        const SlotConfig slots[5] = {
+            { -2, 0.45f, 0.35f },
+            { -1, 0.70f, 0.70f },
+            {  0, 1.00f, 1.00f },
+            {  1, 0.70f, 0.70f },
+            {  2, 0.45f, 0.35f },
+        };
+
+        const float spacing = 46.0f;
+        const float baseW = 34.0f;
+        const float baseH = 68.0f;
+
+        for (const auto &cfg : slots)
         {
-            float t = static_cast<float>(k) - scrollOffset;
-            float dist = std::fabs(t);
-            if (dist > 2.6f)
-                continue;
-
-            int skinIndex = ((currentSkinIndex + k) % totalSkins + totalSkins) % totalSkins;
+            const int skinIndex = ((currentSkinIndex + cfg.offset) % totalSkins + totalSkins) % totalSkins;
             const SkinEntry *skin = SkinManager::getSkin(currentPackIndex, skinIndex);
             if (skin == nullptr)
                 continue;
 
-            float scale = 3.4f - 1.05f * std::min(dist, 2.0f);
-            if (scale < 1.0f) scale = 1.0f;
-
-            float alpha = 1.0f - 0.20f * std::min(dist, 2.0f);
-            if (alpha < 0.35f) alpha = 0.35f;
-
-            float skinW = 16.0f * scale;
-            float skinH = 32.0f * scale;
-            float skinX = static_cast<float>(carouselCenterX) + t * spacing - skinW * 0.5f;
+            float t = static_cast<float>(cfg.offset) + scrollOffset;
+            float skinW = baseW * cfg.scale;
+            float skinH = baseH * cfg.scale;
+            float skinX = static_cast<float>(carouselCenterX) + t * spacing - skinW / 2.0f;
             float skinY = static_cast<float>(carouselGroundY) - skinH;
+            float alpha = cfg.alpha;
 
-            // Draw soft ground shadow
             drawFeetShadow(static_cast<float>(carouselCenterX) + t * spacing, static_cast<float>(carouselGroundY),
-                           skinW * 0.45f, 4.0f, alpha);
+                           skinW * 0.45f, 3.5f, alpha);
 
-            // Draw front preview
             drawFrontPreview(skin, skinX, skinY, skinW, skinH, alpha);
         }
     }
 
-    // 5. Bottom Nameplate Banner
+    // 5. Nameplate banner
     const int_t npPadding = 8;
-    const int_t npW = rightPanelWidth - 44;
+    const int_t npW = rightPanelWidth - npPadding * 2;
     const int_t npX = rightX1 + npPadding;
     const int_t npY = nameplateY;
-    drawInsetPanel(npX, npY, npX + npW, npY + nameplateHeight, 0xFF383838);
+    drawInsetPanel(npX, npY, npX + npW, npY + nameplateHeight, 0xFF181818);
 
-    // Selected skin name
     const SkinEntry *selectedSkin = SkinManager::getSkin(currentPackIndex, currentSkinIndex);
     if (selectedSkin != nullptr)
     {
         std::string displayName = toUpperString(selectedSkin->name);
-        drawCenteredString(fontRenderer, displayName, npX + npW / 2, npY + 10, 0xFFFFFF);
+        drawCenteredString(fontRenderer, displayName, npX + npW / 2, npY + 6, 0xFFFFAA);
     }
 
-    // Two small decorative indicator slots to the right of the nameplate
-    const int_t slotX = npX + npW + 6;
-    const int_t slotW = 14;
-    const int_t slotH = 11;
-    drawInsetPanel(slotX, npY, slotX + slotW, npY + slotH, 0xFF383838);
-    drawInsetPanel(slotX, npY + 14, slotX + slotW, npY + 14 + slotH, 0xFF383838);
-
-    // 6. Navigation arrows
-    fontRenderer->drawStringWithShadow("<", rightX1 + 10, carouselGroundY - 48, 0xEEEEEE);
-    fontRenderer->drawStringWithShadow(">", rightX2 - 16, carouselGroundY - 48, 0xEEEEEE);
-
-    // 7. Footer / Controller Legend
-    const int_t footerY = height - 14;
+    // 6. Footer Controller Legend
+    const int_t footerY = height - 13;
 #if PLATFORM_PS2
-    std::string hint = "[X] Select   [O] Back   [/\\ ] Load";
+    std::string hint = "[X] Select   [O] Back   [L1/R1] Tab   [/\\ ] Load";
     if (currentPackIndex == 1)
         hint += "   [ ] Delete";
 #elif PLATFORM_WII
-    std::string hint = "[A] Select   [B] Back   [D-Pad] Navigate";
+    std::string hint = "[A] Select   [B] Back   [L/R] Tab   [D-Pad] Navigate";
 #else
-    std::string hint = "[Enter] Select   [Esc] Back   [Del] Delete";
+    std::string hint = "[Enter] Select   [Esc] Back   [Tab] Switch Pack";
 #endif
-    fontRenderer->drawStringWithShadow(hint, dialogLeft + 100, footerY, 0xC0C0C0);
+    fontRenderer->drawStringWithShadow(hint, dialogLeft, footerY, 0xC0C0C0);
 
-    // 8. Draw standard GUI controls
+    // 7. Draw standard GUI controls (buttons, tabs, arrows) AND the software cursor
     GuiScreen::drawScreen(mouseX, mouseY, partialTick);
 }

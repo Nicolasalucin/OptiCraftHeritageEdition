@@ -39,7 +39,7 @@ public:
     void setSelectedIndex(int idx);
 
 protected:
-    bool usesSpecializedMenuNavigation() const override { return true; }
+    bool allowsPlatformPointerInput() const override { return true; }
     void handleSpecializedMenuInput() override;
 
 private:

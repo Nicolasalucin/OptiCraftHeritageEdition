@@ -131,6 +131,9 @@ void GuiLoadSkinsList::setSelectedIndex(int idx)
 {
     selectedIndex = idx;
 
+    if (!controlList.empty() && controlList[0] != nullptr)
+        controlList[0]->enabled = (selectedIndex >= 0 && selectedIndex < static_cast<int>(availableSkins.size()));
+
     if (selectedIndex < 0 || selectedIndex >= static_cast<int>(availableSkins.size()))
         return;
 
@@ -192,7 +195,7 @@ void GuiLoadSkinsList::scanSkins()
         scanDirs.push_back("usb/skins");
     }
 
-    std::vector<std::string> seenPaths;
+    std::vector<std::string> seenNames;
 
     for (const auto &dir : scanDirs)
     {
@@ -213,10 +216,14 @@ void GuiLoadSkinsList::scanSkins()
             if (lower.find("_32.png") != std::string::npos || lower.find("_front.png") != std::string::npos)
                 continue;
 
-            std::string fullPath = PlatformStorage::join(dir, entry);
-            if (std::find(seenPaths.begin(), seenPaths.end(), fullPath) != seenPaths.end())
+            std::string baseName = entry.substr(0, entry.size() - 4);
+            std::string lowerBase = baseName;
+            std::transform(lowerBase.begin(), lowerBase.end(), lowerBase.begin(), ::tolower);
+            if (std::find(seenNames.begin(), seenNames.end(), lowerBase) != seenNames.end())
                 continue;
-            seenPaths.push_back(fullPath);
+            seenNames.push_back(lowerBase);
+
+            std::string fullPath = PlatformStorage::join(dir, entry);
 
             std::vector<unsigned char> data;
             if (!PlatformStorage::readFile(fullPath, data) || data.empty())

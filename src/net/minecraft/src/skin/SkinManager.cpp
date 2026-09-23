@@ -1,5 +1,7 @@
 #include "SkinManager.h"
 #include "Minecraft.h"
+#include "GameSettings.h"
+#include "EntityPlayerSP.h"
 #include "java/File.h"
 #include "platform/Storage.h"
 #include "platform/Log.h"
@@ -180,25 +182,25 @@ void SkinManager::init()
         ""
     });
 
-    // Remaining default legacy console skins
+    // Remaining default legacy console skins from assets.pak
     s_defaultSkins.push_back({"TennisSteve", "Tennis Steve", "/skins/TennisSteve.png", "/skins/TennisSteve_32.png", "/skins/TennisSteve_Front.png", false, ""});
     s_defaultSkins.push_back({"TennisAlex", "Tennis Alex", "/skins/TennisAlex.png", "/skins/TennisAlex_32.png", "/skins/TennisAlex_Front.png", false, ""});
     s_defaultSkins.push_back({"TuxedoSteve", "Tuxedo Steve", "/skins/TuxedoSteve.png", "/skins/TuxedoSteve_32.png", "/skins/TuxedoSteve_Front.png", false, ""});
     s_defaultSkins.push_back({"TuxedoAlex", "Tuxedo Alex", "/skins/TuxedoAlex.png", "/skins/TuxedoAlex_32.png", "/skins/TuxedoAlex_Front.png", false, ""});
     s_defaultSkins.push_back({"AthleteSteve", "Athlete Steve", "/skins/AthleteSteve.png", "/skins/AthleteSteve_32.png", "/skins/AthleteSteve_Front.png", false, ""});
-    s_defaultSkins.push_back({"AthleteAlex", "Athlete Alex", "/skins/AthleteAlex.png", "/skins/AthleteAlex_32.png", "/skins/AthleteAlex_Front.png", false, ""});
+    s_defaultSkins.push_back({"SwedishAlex", "Swedish Alex", "/skins/SwedishAlex.png", "/skins/SwedishAlex_32.png", "/skins/SwedishAlex_Front.png", false, ""});
     s_defaultSkins.push_back({"CyclistSteve", "Cyclist Steve", "/skins/CyclistSteve.png", "/skins/CyclistSteve_32.png", "/skins/CyclistSteve_Front.png", false, ""});
     s_defaultSkins.push_back({"CyclistAlex", "Cyclist Alex", "/skins/CyclistAlex.png", "/skins/CyclistAlex_32.png", "/skins/CyclistAlex_Front.png", false, ""});
     s_defaultSkins.push_back({"BoxerSteve", "Boxer Steve", "/skins/BoxerSteve.png", "/skins/BoxerSteve_32.png", "/skins/BoxerSteve_Front.png", false, ""});
     s_defaultSkins.push_back({"BoxerAlex", "Boxer Alex", "/skins/BoxerAlex.png", "/skins/BoxerAlex_32.png", "/skins/BoxerAlex_Front.png", false, ""});
     s_defaultSkins.push_back({"PrisonerSteve", "Prisoner Steve", "/skins/PrisonerSteve.png", "/skins/PrisonerSteve_32.png", "/skins/PrisonerSteve_Front.png", false, ""});
     s_defaultSkins.push_back({"PrisonerAlex", "Prisoner Alex", "/skins/PrisonerAlex.png", "/skins/PrisonerAlex_32.png", "/skins/PrisonerAlex_Front.png", false, ""});
-    s_defaultSkins.push_back({"DeveloperSteve", "Developer Steve", "/skins/DeveloperSteve.png", "/skins/DeveloperSteve_32.png", "/skins/DeveloperSteve_Front.png", false, ""});
-    s_defaultSkins.push_back({"DeveloperAlex", "Developer Alex", "/skins/DeveloperAlex.png", "/skins/DeveloperAlex_32.png", "/skins/DeveloperAlex_Front.png", false, ""});
-    s_defaultSkins.push_back({"ScottishSteve", "Scottish Steve", "/skins/ScottishSteve.png", "/skins/ScottishSteve_32.png", "/skins/ScottishSteve_Front.png", false, ""});
-    s_defaultSkins.push_back({"ScottishAlex", "Scottish Alex", "/skins/ScottishAlex.png", "/skins/ScottishAlex_32.png", "/skins/ScottishAlex_Front.png", false, ""});
-    s_defaultSkins.push_back({"CampfireSteve", "Campfire Steve", "/skins/CampfireSteve.png", "/skins/CampfireSteve_32.png", "/skins/CampfireSteve_Front.png", false, ""});
-    s_defaultSkins.push_back({"CampfireAlex", "Campfire Alex", "/skins/CampfireAlex.png", "/skins/CampfireAlex_32.png", "/skins/CampfireAlex_Front.png", false, ""});
+    s_defaultSkins.push_back({"ScottishSteve", "Scottish Steve", "/skins/Scottish_Steve.png", "/skins/Scottish_Steve_32.png", "/skins/Scottish_Steve_Front.png", false, ""});
+    s_defaultSkins.push_back({"MojangSteve", "Mojang Steve", "/skins/MojangSteve.png", "/skins/MojangSteve_32.png", "/skins/MojangSteve_Front.png", false, ""});
+    s_defaultSkins.push_back({"MojangAlex", "Mojang Alex", "/skins/MojangAlex.png", "/skins/MojangAlex_32.png", "/skins/MojangAlex_Front.png", false, ""});
+    s_defaultSkins.push_back({"Stampy", "Stampy", "/skins/Stampy.png", "/skins/Stampy_32.png", "/skins/Stampy_Front.png", false, ""});
+    s_defaultSkins.push_back({"Crocodile", "Crocodile", "/skins/Crocodile.png", "/skins/Crocodile_32.png", "/skins/Crocodile_Front.png", false, ""});
+    s_defaultSkins.push_back({"LegacySquid", "Legacy Squid", "/skins/LegacySquid.png", "/skins/LegacySquid_32.png", "/skins/LegacySquid_Front.png", false, ""});
 
     s_initialized = true;
 
@@ -227,24 +229,15 @@ void SkinManager::scanCustomSkins()
     s_customSkins.clear();
 
     std::vector<std::string> searchDirs;
-    searchDirs.push_back(getSkinsDir());
+    std::string primaryDir = getSkinsDir();
+    searchDirs.push_back(primaryDir);
 
 #ifdef PS2_PLATFORM
-    searchDirs.push_back("mc0:/OPTCRAFT/skins");
-    searchDirs.push_back("mc0:OPTCRAFT/SKINS");
-    std::string inst = Ps2Assets::installDir();
-    if (!inst.empty())
-    {
-        searchDirs.push_back(PlatformStorage::join(inst, "skins"));
-        searchDirs.push_back(PlatformStorage::join(inst, "SKINS"));
-    }
-    searchDirs.push_back("mass:/OptiCraftHeritage/skins");
-    searchDirs.push_back("mass:/skins");
-    searchDirs.push_back("host:skins");
+    if (primaryDir != "mc0:/OPTCRAFT/skins")
+        searchDirs.push_back("mc0:/OPTCRAFT/skins");
 #endif
-
-    searchDirs.push_back("./skins");
-    searchDirs.push_back("skins");
+    if (primaryDir != "skins" && primaryDir != "./skins")
+        searchDirs.push_back("skins");
 
     std::vector<std::string> seenIds;
 
@@ -437,7 +430,23 @@ bool SkinManager::installCustomSkin(const std::string &sourcePath, const std::st
     // Refresh custom skins and select the newly installed one
     scanCustomSkins();
     s_selectedPackIndex = 1;
-    setSelectedSkinId("custom_" + base);
+    std::string skinId = "custom_" + base;
+    setSelectedSkinId(skinId);
+
+    Minecraft *mc = Minecraft::getMinecraft();
+    if (mc != nullptr)
+    {
+        if (mc->gameSettings != nullptr)
+        {
+            mc->gameSettings->selectedSkin = skinId;
+            mc->gameSettings->saveOptions();
+        }
+        if (mc->thePlayer != nullptr)
+        {
+            mc->thePlayer->setEntityTexture(model32Path);
+            mc->thePlayer->skinUrl = "";
+        }
+    }
 
     MC_LOG_INFO("skins", "Custom skin installed successfully: %s\n", base.c_str());
     return true;

@@ -22,8 +22,7 @@ public:
     bool doesGuiPauseGame() override;
 
 protected:
-    bool usesSpecializedMenuNavigation() const override { return true; }
-    bool suppressesPlatformPointerInput() const override { return true; }
+    bool allowsPlatformPointerInput() const override { return true; }
     void handleSpecializedMenuInput() override;
 
 private:
@@ -40,6 +39,7 @@ private:
     void drawFeetShadow(float centerX, float groundY, float radiusX, float radiusY, float alpha);
 
     GuiScreen *parentScreen;
+    bool initializedSelection;
     int currentPackIndex;
     int currentSkinIndex;
     float scrollOffset; // smooth transition offset: -1.0 (moving right) to +1.0 (moving left), dampens to 0.0
@@ -57,13 +57,12 @@ private:
     int_t nameplateY;
     int_t nameplateHeight;
 
-    // Tabs hit testing
-    int_t tabDefaultTop;
-    int_t tabDefaultBottom;
-    int_t tabCustomTop;
-    int_t tabCustomBottom;
-
-    // Bottom action buttons
+    // Interactive GUI buttons
+    GuiButton *buttonTabDefault;
+    GuiButton *buttonTabCustom;
+    GuiButton *buttonPrevSkin;
+    GuiButton *buttonNextSkin;
+    GuiButton *buttonConfirm;
     GuiButton *buttonPlayer2Skin;
     GuiButton *buttonLoadSkins;
     GuiButton *buttonDeleteSkin;
