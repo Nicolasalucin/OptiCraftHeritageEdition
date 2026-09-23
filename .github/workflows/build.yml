@@ -8,7 +8,10 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 on:
+  # Branches are covered by pull_request below; restricting push to main
+  # avoids running every job twice (push + PR) for the same commit.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -17,7 +20,7 @@ jobs:
   build-ps2:
     timeout-minutes: 45
     name: PlayStation 2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -25,16 +28,13 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: Init required submodules
-        run: git submodule update --init --depth 1 -- external/zlib external/stb
-
       - name: Install build tools
         run: sudo apt update && sudo apt install -y ninja-build ccache
 
       - name: Cache ccache
         uses: actions/cache@v6
         with:
-          path: ~/.ccache
+          path: ~/.cache/ccache
           key: ccache-ps2-${{ github.run_id }}
           restore-keys: |
             ccache-ps2-
@@ -65,7 +65,7 @@ jobs:
           echo "/usr/local/ps2dev/ee/bin" >> "$GITHUB_PATH"
           echo "/usr/local/ps2dev/ps2sdk/bin" >> "$GITHUB_PATH"
           echo "/usr/local/ps2dev/bin" >> "$GITHUB_PATH"
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
 
       - name: Configure
         run: >
@@ -106,7 +106,7 @@ jobs:
   build-wii:
     timeout-minutes: 45
     name: Nintendo Wii
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     container:
       image: devkitpro/devkitppc:20260503
     steps:
@@ -122,13 +122,10 @@ jobs:
       - name: Mark workspace safe
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Init required submodules
-        run: git submodule update --init --depth 1 -- external/zlib external/stb
-
       - name: Cache ccache
         uses: actions/cache@v6
         with:
-          path: ~/.ccache
+          path: ~/.cache/ccache
           key: ccache-wii-${{ github.run_id }}
           restore-keys: |
             ccache-wii-
@@ -175,7 +172,7 @@ jobs:
   build-windows-x64-gcc:
     timeout-minutes: 45
     name: Windows x64 GCC
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -183,10 +180,7 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: Init required submodules
-        run: git submodule update --init --depth 1 -- external/SDL2 external/zlib external/gzip-hpp external/stb external/miniaudio
-
-      - name: Clone SDL_net (phantom submodule)
+      - name: Clone SDL_net (pinned)
         run: |
           if not exist "external\SDL_net\CMakeLists.txt" (
             echo Cloning SDL_net...
@@ -247,3 +241,293 @@ jobs:
         if: always()
         run: ccache --show-stats || echo "ccache not available"
         shell: bash
+
+  # ── Windows 32-bit GCC / Legacy GCC (MinGW32 via MSYS2) ──────────────
+  # The image's gcc is x86_64 and not multilib, so -m32 cannot produce
+  # 32-bit binaries. MINGW32's i686 gcc is natively 32-bit; on it the
+  # presets' -m32 flag is a no-op. The presets' hardcoded VS Community
+  # ninja path does not exist on the runner (Enterprise edition), so
+  # CMAKE_MAKE_PROGRAM is overridden with MSYS2's ninja.
+  build-windows-x86-gcc:
+    timeout-minutes: 45
+    name: ${{ matrix.name }}
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86 GCC
+            preset: gcc32-release
+            exe: OptiCraft-windows-x86-gcc.exe
+            artifact: opticraft-windows-x86-gcc
+          - name: Windows x86 Legacy GCC
+            preset: gcc32-legacy-release
+            exe: OptiCraft-windows-x86-gcc-legacy.exe
+            artifact: opticraft-windows-x86-gcc-legacy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Clone SDL_net (pinned)
+        run: |
+          if not exist "external\SDL_net\CMakeLists.txt" (
+            echo Cloning SDL_net...
+            git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+            cd external\SDL_net
+            git fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+            git checkout FETCH_HEAD
+          ) else (
+            echo SDL_net already present
+          )
+        shell: cmd
+
+      - name: Setup MSYS2 (MinGW32 toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          path-type: minimal
+          update: true
+          suppress-deprecation-warnings: msystem-mingw32
+          install: >-
+            mingw-w64-i686-gcc
+            mingw-w64-i686-cmake
+            mingw-w64-i686-ninja
+
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          cmake --preset ${{ matrix.preset }} \
+            -DCMAKE_MAKE_PROGRAM=ninja \
+            "-DCMAKE_CXX_FLAGS=-m32 -msse2 -mfpmath=sse -I$(cygpath -m "$PWD")/src/net/minecraft/src"
+
+      - name: Build
+        shell: msys2 {0}
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp bin/Release/OptiCraft.exe "dist/${{ matrix.exe }}"
+          tar -C dist -czf "${{ matrix.exe }}.tar.gz" "${{ matrix.exe }}"
+        shell: bash
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.exe }}.tar.gz
+          if-no-files-found: error
+
+  # ── Windows x64 MSVC ─────────────────────────────────────────────────
+  build-windows-x64-msvc:
+    timeout-minutes: 45
+    name: Windows x64 MSVC
+    runs-on: windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Clone SDL_net (pinned)
+        run: |
+          if not exist "external\SDL_net\CMakeLists.txt" (
+            echo Cloning SDL_net...
+            git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+            cd external\SDL_net
+            git fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+            git checkout FETCH_HEAD
+          ) else (
+            echo SDL_net already present
+          )
+        shell: cmd
+
+      - name: Configure
+        # CXXFLAGS env is used (appended to cl's default /DWIN32 /W3 /EHsc via
+        # CMAKE_CXX_FLAGS_INIT) instead of -DCMAKE_CXX_FLAGS, which would replace
+        # those defaults.
+        env:
+          CXXFLAGS: -I${{ github.workspace }}/src/net/minecraft/src
+        run: cmake -B build/msvc-release -G "Visual Studio 17 2022" -A x64 -DMC_LOG_LEVEL=2
+
+      - name: Build
+        run: cmake --build build/msvc-release --config Release --parallel
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp bin/Release/OptiCraft.exe dist/OptiCraft-windows-x64-msvc.exe
+          tar -C dist -czf OptiCraft-windows-x64-msvc.tar.gz OptiCraft-windows-x64-msvc.exe
+        shell: bash
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opticraft-windows-x64-msvc
+          path: OptiCraft-windows-x64-msvc.tar.gz
+          if-no-files-found: error
+
+  # ── Linux x64 GCC ────────────────────────────────────────────────────
+  build-linux-x64-gcc:
+    timeout-minutes: 45
+    name: Linux x64 GCC
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Clone SDL_net (pinned)
+        run: |
+          if [ ! -f external/SDL_net/CMakeLists.txt ]; then
+            echo "Cloning SDL_net..."
+            git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+            git -C external/SDL_net fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+            git -C external/SDL_net checkout FETCH_HEAD
+          else
+            echo "SDL_net already present"
+          fi
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache \
+            libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libasound2-dev
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-x64-${{ github.run_id }}
+          restore-keys: |
+            ccache-linux-x64-
+
+      - name: Configure ccache
+        run: ccache --max-size=2G && ccache --set-config=compression=true
+
+      - name: Configure
+        run: >
+          cmake -B build/gcc-release -G Ninja
+          -DCMAKE_C_COMPILER=gcc
+          -DCMAKE_CXX_COMPILER=g++
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_MAKE_PROGRAM=ninja
+          -DMC_LOG_LEVEL=2
+          "-DCMAKE_CXX_FLAGS=-I$GITHUB_WORKSPACE/src/net/minecraft/src"
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build/gcc-release --parallel
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp bin/Release/OptiCraft dist/OptiCraft-linux-x64-gcc
+          tar -C dist -czf OptiCraft-linux-x64-gcc.tar.gz OptiCraft-linux-x64-gcc
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opticraft-linux-x64-gcc
+          path: OptiCraft-linux-x64-gcc.tar.gz
+          if-no-files-found: error
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
+
+  # ── Linux 32-bit GCC ─────────────────────────────────────────────────
+  # -m32 build (mirrors the gcc32-* presets). SDL video/audio backends that
+  # would pick up the host's amd64 dev libraries are disabled explicitly so
+  # nothing 64-bit sneaks into a 32-bit link; OpenGL is forced to the legacy
+  # (non-GLVND) path so OpenGL::GL resolves to the i386 libGL.so.1 from
+  # libgl1:i386 instead of the amd64 libOpenGL/libGLX GLVND libraries.
+  build-linux-x86-gcc:
+    timeout-minutes: 45
+    name: Linux x86 GCC
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Clone SDL_net (pinned)
+        run: |
+          if [ ! -f external/SDL_net/CMakeLists.txt ]; then
+            echo "Cloning SDL_net..."
+            git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+            git -C external/SDL_net fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+            git -C external/SDL_net checkout FETCH_HEAD
+          else
+            echo "SDL_net already present"
+          fi
+
+      - name: Install build tools (multilib + i386 GL runtime)
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib ninja-build ccache \
+            libgl-dev libgl1:i386
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-x86-${{ github.run_id }}
+          restore-keys: |
+            ccache-linux-x86-
+
+      - name: Configure ccache
+        run: ccache --max-size=2G && ccache --set-config=compression=true
+
+      - name: Configure
+        run: >
+          cmake -B build/gcc32-release -G Ninja
+          -DCMAKE_C_COMPILER=gcc
+          -DCMAKE_CXX_COMPILER=g++
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_MAKE_PROGRAM=ninja
+          -DMC_LOG_LEVEL=2
+          -DCMAKE_C_FLAGS="-m32 -msse2 -mfpmath=sse"
+          "-DCMAKE_CXX_FLAGS=-m32 -msse2 -mfpmath=sse -I$GITHUB_WORKSPACE/src/net/minecraft/src"
+          -DCMAKE_EXE_LINKER_FLAGS=-m32
+          -DCMAKE_SHARED_LINKER_FLAGS=-m32
+          -DCMAKE_MODULE_LINKER_FLAGS=-m32
+          -DOpenGL_GL_PREFERENCE=LEGACY
+          -DOPENGL_gl_LIBRARY=/usr/lib/i386-linux-gnu/libGL.so.1
+          -DSDL_X11=OFF
+          -DSDL_WAYLAND=OFF
+          -DSDL_ALSA=OFF
+          -DSDL_PULSEAUDIO=OFF
+          -DSDL_UDEV=OFF
+          -DSDL_JACK=OFF
+          -DSDL_PIPEWIRE=OFF
+          -DSDL_SNDIO=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build/gcc32-release --parallel
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp bin/Release/OptiCraft dist/OptiCraft-linux-x86-gcc
+          tar -C dist -czf OptiCraft-linux-x86-gcc.tar.gz OptiCraft-linux-x86-gcc
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opticraft-linux-x86-gcc
+          path: OptiCraft-linux-x86-gcc.tar.gz
+          if-no-files-found: error
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
