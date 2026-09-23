@@ -182,9 +182,7 @@ void poll(WiiPadInternal::FrameState& state)
 	state.setMouse(VM_ATTACK,    lwjgl::Mouse::isGrabbed()
 		? (!thirdPersonChordHeld && (held & wmButtons.attack) != 0)
 		: (held & WPAD_BUTTON_A) != 0);
-	state.setMouse(VM_USE,       lwjgl::Mouse::isGrabbed()
-		? (!thirdPersonChordHeld && (held & wmButtons.use) != 0)
-		: (held & WPAD_BUTTON_B) != 0);
+	state.setMouse(VM_USE,       !thirdPersonChordHeld && (held & wmButtons.use) != 0);
 
 	if (held & WPAD_BUTTON_A)      state.textInputHeld |= WII_TEXT_TYPE;
 	if (held & WPAD_BUTTON_B)      state.textInputHeld |= WII_TEXT_BACK;
@@ -233,9 +231,9 @@ void poll(WiiPadInternal::FrameState& state)
 	{
 		g_classicMenuStickWasActive = false;
 		const u32 padButtons = WPAD_BUTTON_UP | WPAD_BUTTON_DOWN | WPAD_BUTTON_LEFT |
-			WPAD_BUTTON_RIGHT | WPAD_BUTTON_PLUS | WPAD_BUTTON_MINUS |
+			WPAD_BUTTON_RIGHT | WPAD_BUTTON_PLUS | WPAD_BUTTON_MINUS | WPAD_BUTTON_B |
 			WPAD_BUTTON_1 | WPAD_BUTTON_2;
-		if ((down & padButtons) != 0 || ((down & (WPAD_BUTTON_A | WPAD_BUTTON_B)) != 0 && !irValid))
+		if ((down & padButtons) != 0 || ((down & WPAD_BUTTON_A) != 0 && !irValid))
 			state.menuPadActivity = true;
 	}
 
@@ -404,7 +402,7 @@ void poll(WiiPadInternal::FrameState& state)
 		if (expType != WPAD_EXP_CLASSIC)
 		{
 			state.menuPointerActivity = WiiPointer::menuPointerActivity() ||
-				(state.inMenu && (down & (WPAD_BUTTON_A | WPAD_BUTTON_B)) != 0);
+				(state.inMenu && (down & WPAD_BUTTON_A) != 0);
 		}
 	}
 	else

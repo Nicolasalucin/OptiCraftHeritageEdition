@@ -72,7 +72,6 @@ void ContainerPlayer::onCraftGuiClosed(EntityPlayer *entityplayer)
 			entityplayer->dropPlayerItem(itemstack);
 		}
 	}
-	craftResult->setInventorySlotContents(0, nullptr);
 }
 
 bool ContainerPlayer::isUsableByPlayer(EntityPlayer *entityplayer)
