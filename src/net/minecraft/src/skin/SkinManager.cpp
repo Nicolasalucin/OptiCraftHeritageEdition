@@ -125,14 +125,36 @@ bool assembleFrontPreview(const unsigned char *rgba, int w, int h, std::vector<u
     return true;
 }
 
-// Converts a 64x64 skin to a 64x32 retro-compatible texture for Beta 1.7.3 ModelBiped
+// Converts a 64x64 skin to a 64x32 retro-compatible texture for MC 1.2.5 ModelBiped
 bool makeRetro32(const unsigned char *rgba, int w, int h, std::vector<unsigned char> &outRetro)
 {
-    if (rgba == nullptr || w != 64)
+    if (rgba == nullptr || w != 64 || (h != 32 && h != 64))
         return false;
 
     outRetro.assign(64 * 32 * 4, 0);
     std::memcpy(outRetro.data(), rgba, 64 * 32 * 4);
+
+    if (h == 64)
+    {
+        // Composite modern 64x64 second-layer overlays onto base body parts:
+        // Torso overlay: (16, 32, 24, 16) -> (16, 16, 24, 16)
+        copyPixelRect(rgba, w, h, 16, 32, 24, 16, outRetro.data(), 64, 32, 16, 16, false, true);
+        // Right Arm overlay: (40, 32, 16, 16) -> (40, 16, 16, 16)
+        copyPixelRect(rgba, w, h, 40, 32, 16, 16, outRetro.data(), 64, 32, 40, 16, false, true);
+        // Right Leg overlay: (0, 32, 16, 16) -> (0, 16, 16, 16)
+        copyPixelRect(rgba, w, h, 0, 32, 16, 16, outRetro.data(), 64, 32, 0, 16, false, true);
+    }
+
+    // Set base skin regions opaque (Minecraft 1.2.5 spec)
+    // Head base (0, 0, 32, 16)
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 32; ++x)
+            outRetro[(x + y * 64) * 4 + 3] = 255;
+    // Torso, arms, legs (0, 16, 64, 16)
+    for (int y = 16; y < 32; ++y)
+        for (int x = 0; x < 64; ++x)
+            outRetro[(x + y * 64) * 4 + 3] = 255;
+
     return true;
 }
 
@@ -264,6 +286,18 @@ void SkinManager::scanCustomSkins()
             if (lower.find("_32.png") != std::string::npos || lower.find("_front.png") != std::string::npos)
                 continue;
 
+            std::string fullPath = PlatformStorage::join(dir, entry);
+            std::vector<unsigned char> rawBytes;
+            if (!PlatformStorage::readFile(fullPath, rawBytes) || rawBytes.empty())
+                continue;
+
+            int w = 0, h = 0, comp = 0;
+            if (!stbi_info_from_memory(rawBytes.data(), static_cast<int>(rawBytes.size()), &w, &h, &comp))
+                continue;
+
+            if (w != 64 || (h != 32 && h != 64))
+                continue;
+
             std::string baseName = entry.substr(0, entry.size() - 4);
             std::string id = "custom_" + baseName;
 
@@ -271,15 +305,68 @@ void SkinManager::scanCustomSkins()
                 continue;
             seenIds.push_back(id);
 
-            std::string fullPath = PlatformStorage::join(dir, entry);
             std::string model32 = PlatformStorage::join(dir, baseName + "_32.png");
             std::string front32 = PlatformStorage::join(dir, baseName + "_Front.png");
+
+            // Auto-generate retro 64x32 and front preview if missing
+            if (h == 64 && !PlatformStorage::exists(model32))
+            {
+                unsigned char *rgba = stbi_load_from_memory(rawBytes.data(), static_cast<int>(rawBytes.size()), &w, &h, &comp, 4);
+                if (rgba != nullptr)
+                {
+                    std::vector<unsigned char> retro32;
+                    if (makeRetro32(rgba, w, h, retro32))
+                    {
+                        int len = 0;
+                        unsigned char *png = stbi_write_png_to_mem(retro32.data(), 64 * 4, 64, 32, 4, &len);
+                        if (png != nullptr)
+                        {
+                            PlatformStorage::writeFile(model32, png, len);
+                            STBIW_FREE(png);
+                        }
+                    }
+                    if (!PlatformStorage::exists(front32))
+                    {
+                        std::vector<unsigned char> frontRgba;
+                        if (assembleFrontPreview(rgba, w, h, frontRgba))
+                        {
+                            int len = 0;
+                            unsigned char *png = stbi_write_png_to_mem(frontRgba.data(), 16 * 4, 16, 32, 4, &len);
+                            if (png != nullptr)
+                            {
+                                PlatformStorage::writeFile(front32, png, len);
+                                STBIW_FREE(png);
+                            }
+                        }
+                    }
+                    stbi_image_free(rgba);
+                }
+            }
+            else if (h == 32 && !PlatformStorage::exists(front32))
+            {
+                unsigned char *rgba = stbi_load_from_memory(rawBytes.data(), static_cast<int>(rawBytes.size()), &w, &h, &comp, 4);
+                if (rgba != nullptr)
+                {
+                    std::vector<unsigned char> frontRgba;
+                    if (assembleFrontPreview(rgba, w, h, frontRgba))
+                    {
+                        int len = 0;
+                        unsigned char *png = stbi_write_png_to_mem(frontRgba.data(), 16 * 4, 16, 32, 4, &len);
+                        if (png != nullptr)
+                        {
+                            PlatformStorage::writeFile(front32, png, len);
+                            STBIW_FREE(png);
+                        }
+                    }
+                    stbi_image_free(rgba);
+                }
+            }
 
             SkinEntry custom;
             custom.id = id;
             custom.name = sanitizeSkinName(baseName);
             custom.skinPath = fullPath;
-            custom.modelPath = PlatformStorage::exists(model32) ? model32 : fullPath;
+            custom.modelPath = (h == 64 && PlatformStorage::exists(model32)) ? model32 : (h == 32 ? fullPath : model32);
             custom.frontPath = PlatformStorage::exists(front32) ? front32 : "";
             custom.isCustom = true;
             custom.filePath = fullPath;
@@ -443,7 +530,8 @@ bool SkinManager::installCustomSkin(const std::string &sourcePath, const std::st
         }
         if (mc->thePlayer != nullptr)
         {
-            mc->thePlayer->setEntityTexture(model32Path);
+            std::string activeModelPath = (h == 64 && PlatformStorage::exists(model32Path)) ? model32Path : mainPath;
+            mc->thePlayer->setEntityTexture(activeModelPath);
             mc->thePlayer->skinUrl = "";
         }
     }

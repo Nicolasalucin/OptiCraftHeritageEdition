@@ -76,6 +76,9 @@ GuiSkinSelector::GuiSkinSelector(GuiScreen *parent)
     , lastPadHeld(0)
 #endif
 {
+#if PLATFORM_PS2
+    lastPadHeld = ps2PadGetSnapshot(platformMenuPad()).held;
+#endif
     SkinManager::init();
     currentPackIndex = SkinManager::getSelectedPackIndex();
     currentSkinIndex = SkinManager::getSelectedIndex();
@@ -229,8 +232,15 @@ void GuiSkinSelector::handleSpecializedMenuInput()
 #if PLATFORM_PS2
     const Ps2PadSnapshot &ps2Pad = ps2PadGetSnapshot(platformMenuPad());
     const unsigned short held = ps2Pad.held;
-    const unsigned short pressed = held & ~lastPadHeld;
+    unsigned short pressed = held & ~lastPadHeld;
     lastPadHeld = held;
+
+    if (ps2ActionReleaseLatch)
+    {
+        pressed &= ~PS2_PAD_CROSS;
+        if ((held & PS2_PAD_CROSS) == 0)
+            ps2ActionReleaseLatch = false;
+    }
 
     // Circle: Cancel / Return
     if ((pressed & PS2_PAD_CIRCLE) != 0)
@@ -268,28 +278,28 @@ void GuiSkinSelector::handleSpecializedMenuInput()
         }
     }
 
-    // L1 / R1 or D-Pad Left / Right: Navigate carousel skins
+    // L1 / R1: Navigate carousel skins (D-Pad disabled for carousel to avoid conflict with pointer)
     bool movedLeft = false;
     bool movedRight = false;
 
-    if ((pressed & (PS2_PAD_L1 | PS2_PAD_LEFT)) != 0)
+    if ((pressed & PS2_PAD_L1) != 0)
     {
         movedLeft = true;
         dpadRepeatTimer = 0;
     }
-    else if ((held & (PS2_PAD_L1 | PS2_PAD_LEFT)) != 0)
+    else if ((held & PS2_PAD_L1) != 0)
     {
         dpadRepeatTimer++;
         if (dpadRepeatTimer > 15 && (dpadRepeatTimer % 5) == 0)
             movedLeft = true;
     }
 
-    if ((pressed & (PS2_PAD_R1 | PS2_PAD_RIGHT)) != 0)
+    if ((pressed & PS2_PAD_R1) != 0)
     {
         movedRight = true;
         dpadRepeatTimer = 0;
     }
-    else if ((held & (PS2_PAD_R1 | PS2_PAD_RIGHT)) != 0)
+    else if ((held & PS2_PAD_R1) != 0)
     {
         dpadRepeatTimer++;
         if (dpadRepeatTimer > 15 && (dpadRepeatTimer % 5) == 0)
@@ -377,57 +387,30 @@ void GuiSkinSelector::keyTyped(char_t c, int_t key)
         return;
     }
 
-    // L1 or Left arrow or A: Previous skin
-#ifdef PS2_PLATFORM
-    if (key == PS2_KEY_L1 || key == lwjgl::Keyboard::KEY_LEFT || key == lwjgl::Keyboard::KEY_A)
-#else
+    // Left arrow or A: Previous skin
     if (key == lwjgl::Keyboard::KEY_LEFT || key == lwjgl::Keyboard::KEY_A)
-#endif
     {
         prevSkin();
         return;
     }
 
-    // R1 or Right arrow or D: Next skin
-#ifdef PS2_PLATFORM
-    if (key == PS2_KEY_R1 || key == lwjgl::Keyboard::KEY_RIGHT || key == lwjgl::Keyboard::KEY_D)
-#else
+    // Right arrow or D: Next skin
     if (key == lwjgl::Keyboard::KEY_RIGHT || key == lwjgl::Keyboard::KEY_D)
-#endif
     {
         nextSkin();
         return;
     }
 
-    // L2 / R2 or Tab: Switch pack/tab
-#ifdef PS2_PLATFORM
-    if (key == PS2_KEY_L2 || key == PS2_KEY_R2 || key == lwjgl::Keyboard::KEY_TAB)
-#else
+    // Tab: Switch pack/tab
     if (key == lwjgl::Keyboard::KEY_TAB)
-#endif
     {
         if (SkinManager::getPackCount() > 1)
             switchPack(1 - currentPackIndex);
         return;
     }
 
-    // Triangle: Open Load Skins
-#ifdef PS2_PLATFORM
-    if (key == PS2_KEY_TRIANGLE)
-    {
-        if (mc != nullptr && mc->sndManager != nullptr)
-            mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
-        mc->displayGuiScreen(new GuiLoadSkinsMenu(this));
-        return;
-    }
-#endif
-
-    // Square or Delete: Delete current custom skin
-#ifdef PS2_PLATFORM
-    if (key == PS2_KEY_SQUARE || key == lwjgl::Keyboard::KEY_DELETE)
-#else
+    // Delete: Delete current custom skin
     if (key == lwjgl::Keyboard::KEY_DELETE)
-#endif
     {
         deleteCurrentCustomSkin();
         return;
