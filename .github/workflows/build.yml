@@ -42,6 +42,11 @@ jobs:
       - name: Configure ccache
         run: ccache --max-size=2G && ccache --set-config=compression=true
 
+      - name: Prepare ps2dev directory permissions
+        run: |
+          sudo mkdir -p /usr/local/ps2dev
+          sudo chown -R $USER:$USER /usr/local/ps2dev
+
       - name: Cache ps2dev toolchain
         id: cache-ps2dev
         uses: actions/cache@v6
@@ -383,7 +388,6 @@ jobs:
           msystem: MINGW32
           path-type: minimal
           update: true
-          suppress-deprecation-warnings: msystem-mingw32
           install: >-
             mingw-w64-i686-gcc
             mingw-w64-i686-cmake
@@ -560,8 +564,8 @@ jobs:
 
       - name: Install build tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache \
+          sudo apt update
+          sudo apt install -y ninja-build ccache \
             libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libasound2-dev
 
@@ -658,8 +662,8 @@ jobs:
 
       - name: Install build tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache \
+          sudo apt update
+          sudo apt install -y ninja-build ccache \
             libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libasound2-dev
 
@@ -737,8 +741,8 @@ jobs:
       - name: Install build tools (multilib + i386 GL runtime)
         run: |
           sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y gcc-multilib g++-multilib ninja-build ccache \
+          sudo apt update
+          sudo apt install -y gcc-multilib g++-multilib ninja-build ccache \
             libgl-dev libgl1:i386
 
       - name: Cache ccache
@@ -805,8 +809,14 @@ jobs:
   # dlopen, so no libGL symbols are referenced at link time). armhf packages
   # still live on ports.ubuntu.com (only arm64 joined archive.ubuntu.com in
   # 26.04), so an armhf ports source is added and the stock sources are
-  # restricted to the host arches; otherwise apt-get update 404s asking
-  # archive.ubuntu.com for armhf indices.
+  # restricted to the host arches; otherwise apt update 404s asking
+  # archive.ubuntu.com for armhf indices. The ports source also lists the
+  # -updates and -security pockets: libc6 must be the exact same version on
+  # every architecture (libc6:armhf Breaks libc6 (!= same version)), and the
+  # runner's amd64 libc6 tracks -security while the base pocket stays frozen
+  # at the release version. Subscribing only to the base suite leaves armhf
+  # libc6 behind, so every multiarch transaction (cross toolchain, libgl1:armhf)
+  # dies with "two conflicting assignments".
   build-linux-armv7-gcc:
     timeout-minutes: 45
     name: Linux ARMv7 GCC
@@ -839,16 +849,20 @@ jobs:
             sudo mv /tmp/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources
           fi
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          # NB: ubuntu-keyring ships the archive keyring as
+          # ubuntu-archive-keyring.gpg; a ".pgp" path does not exist on any
+          # release, and apt rejects the repo with NO_PUBKEY when Signed-By
+          # points at a missing keyring.
           printf '%s\n' \
             'Types: deb' \
             'URIs: http://ports.ubuntu.com/ubuntu-ports' \
-            "Suites: $codename" \
+            "Suites: $codename $codename-updates $codename-security" \
             'Components: main universe' \
             'Architectures: armhf' \
-            'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.pgp' \
+            'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
             | sudo tee /etc/apt/sources.list.d/armhf-ports.sources
-          sudo apt-get update
-          sudo apt-get install -y g++-arm-linux-gnueabihf ninja-build ccache \
+          sudo apt update
+          sudo apt install -y --allow-downgrades crossbuild-essential-armhf ninja-build ccache \
             libgl-dev libgl1:armhf
 
       - name: Cache ccache
@@ -899,6 +913,111 @@ jobs:
         with:
           name: opticraft-linux-armv7-gcc
           path: OptiCraft-linux-armv7-gcc.tar.gz
+          if-no-files-found: error
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
+
+  # ── macOS ARM64 / x64 (AppleClang) ───────────────────────────────────
+  # Two native jobs instead of one cross-compile: the desktop configure
+  # already accepts Apple (CMakeLists' elseif(UNIX) branch keeps the
+  # src/pc/linux POSIX implementations and drops only src/pc/win32), and
+  # building on each runner's own CPU exercises both slices of the toolchain
+  # for real. CMAKE_OSX_ARCHITECTURES is still passed so the artifact cannot
+  # silently change arch if a runner label is ever remapped.
+  #
+  # CMAKE_OSX_DEPLOYMENT_TARGET pins the minimum OS: without it the binaries
+  # record the runner's SDK as their floor and only launch on this year's
+  # macOS. std::filesystem (Main.cpp) needs 10.15, and arm64 starts at 11.0.
+  #
+  # No apt-style GL/X11/ALSA packages: the Xcode SDK already ships the Cocoa
+  # and OpenGL frameworks SDL2/glad use (glad dlopens OpenGL.framework).
+  build-macos:
+    timeout-minutes: 45
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS ARM64 Clang
+            runner: macos-26
+            suffix: arm64
+            arch: arm64
+            target: '11.0'
+          - name: macOS x64 Clang
+            runner: macos-26-intel
+            suffix: x64
+            arch: x86_64
+            target: '10.15'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Clone SDL_net (pinned)
+        run: |
+          if [ ! -f external/SDL_net/CMakeLists.txt ]; then
+            echo "Cloning SDL_net..."
+            git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+            git -C external/SDL_net fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+            git -C external/SDL_net checkout FETCH_HEAD
+          else
+            echo "SDL_net already present"
+          fi
+
+      - name: Install build tools
+        # ninja is not preinstalled on the macOS runner images (the Linux jobs
+        # get it from apt, the Windows images ship it); brew is on PATH and
+        # re-installing an already-present formula is a no-op.
+        run: brew install ninja ccache
+
+      - name: Configure ccache dir
+        # Force the same path as the cache step below instead of relying on
+        # this ccache build's macOS default (which may be ~/Library/Caches).
+        run: echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-macos-${{ matrix.suffix }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-macos-${{ matrix.suffix }}-
+
+      - name: Configure ccache
+        run: ccache --max-size=2G && ccache --set-config=compression=true
+
+      - name: Configure
+        run: >
+          cmake -B build/clang-release -G Ninja
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_MAKE_PROGRAM=ninja
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.target }}
+          -DMC_LOG_LEVEL=2
+          "-DCMAKE_CXX_FLAGS=-I$GITHUB_WORKSPACE/src/net/minecraft/src"
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build/clang-release --parallel
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp bin/Release/OptiCraft dist/OptiCraft-macos-${{ matrix.suffix }}-clang
+          tar -C dist -czf OptiCraft-macos-${{ matrix.suffix }}-clang.tar.gz OptiCraft-macos-${{ matrix.suffix }}-clang
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opticraft-macos-${{ matrix.suffix }}-clang
+          path: OptiCraft-macos-${{ matrix.suffix }}-clang.tar.gz
           if-no-files-found: error
 
       - name: ccache stats

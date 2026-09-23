@@ -10,7 +10,7 @@ on:
 
 jobs:
   # One matrix job per artifact produced by build.yml — same behaviour as
-  # separate jobs, without seventeen copy-pasted blocks.
+  # separate jobs, without nineteen copy-pasted blocks.
   deploy:
     name: Deploy ${{ matrix.platform }}
     runs-on: ubuntu-26.04
@@ -69,6 +69,12 @@ jobs:
           - platform: Linux x86 GCC
             artifact: opticraft-linux-x86-gcc
             file: OptiCraft-linux-x86-gcc.tar.gz
+          - platform: macOS ARM64 Clang
+            artifact: opticraft-macos-arm64-clang
+            file: OptiCraft-macos-arm64-clang.tar.gz
+          - platform: macOS x64 Clang
+            artifact: opticraft-macos-x64-clang
+            file: OptiCraft-macos-x64-clang.tar.gz
     steps:
       - name: Download ${{ matrix.artifact }} artifact
         uses: dawidd6/action-download-artifact@v24
