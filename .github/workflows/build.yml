@@ -1006,7 +1006,10 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build/clang-release --parallel
+        # -k 0: this is a first-ever port, and ninja's default is to stop at
+        # the first failed TU, which would cost one CI run per compile error
+        # across ~1470 objects. Keep going so one run reports every one.
+        run: cmake --build build/clang-release --parallel -- -k 0
 
       - name: Package
         run: |

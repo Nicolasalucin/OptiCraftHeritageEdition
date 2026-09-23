@@ -74,7 +74,12 @@ extern  _LIB_VERSION_TYPE  _LIB_VERSION;
 #define _XOPEN_ fdlibm_xopen
 #define _POSIX_ fdlibm_posix
 
-struct exception {
+/* SVID matherr payload. The tag is deliberately not the historical
+ * "struct exception": Darwin's <math.h> defines a struct by exactly that
+ * name, and fdlibm_support.c must include <math.h> before this header (see
+ * the note there), which made the second definition a hard redefinition
+ * error on macOS. Nothing outside this header refers to the tag. */
+struct fdlibm_exception {
 	int type;
 	char *name;
 	double arg1;
@@ -161,7 +166,7 @@ extern double ieee_scalb __P((double, int));
 extern double ieee_scalb __P((double, double));
 #endif
 
-extern int ieee_matherr __P((struct exception *));
+extern int ieee_matherr __P((struct fdlibm_exception *));
 
 /*
  * IEEE Test Vector
