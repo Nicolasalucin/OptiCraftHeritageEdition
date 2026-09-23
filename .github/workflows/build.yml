@@ -242,6 +242,99 @@ jobs:
         run: ccache --show-stats || echo "ccache not available"
         shell: bash
 
+  # ── Windows GCC variants: x86_64 micro-architecture levels ──────────
+  # Same steps as Windows x64 GCC (MinGW gcc from the image's PATH, which
+  # ships GCC 15.x and thus knows x86-64-v3/znver3/znver4); only -march
+  # differs, applied to both C and C++ flags. -march only selects code
+  # generation, so these binaries are produced on the generic x64 runner --
+  # the build host does not need that CPU, the resulting binary does.
+  build-windows-gcc-variants:
+    timeout-minutes: 45
+    name: ${{ matrix.name }}
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86_64-v3 GCC
+            suffix: x86_64-v3
+            march: '-march=x86-64-v3'
+          - name: Windows Zen 4 GCC
+            suffix: zen4
+            march: '-march=znver4'
+          - name: Windows Zen 3 GCC
+            suffix: zen3
+            march: '-march=znver3'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Clone SDL_net (pinned)
+        run: |
+          if not exist "external\SDL_net\CMakeLists.txt" (
+            echo Cloning SDL_net...
+            git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+            cd external\SDL_net
+            git fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+            git checkout FETCH_HEAD
+          ) else (
+            echo SDL_net already present
+          )
+        shell: cmd
+
+      - name: Install ccache
+        run: choco install ccache -y
+        shell: pwsh
+
+      - name: Configure ccache dir
+        run: echo "CCACHE_DIR=${{ github.workspace }}\.ccache" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-${{ matrix.suffix }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-windows-${{ matrix.suffix }}-
+
+      - name: Configure
+        run: >
+          cmake -B build/gcc-release -G Ninja
+          -DCMAKE_C_COMPILER=gcc
+          -DCMAKE_CXX_COMPILER=g++
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_MAKE_PROGRAM=ninja
+          -DMC_LOG_LEVEL=2
+          "-DCMAKE_C_FLAGS=${{ matrix.march }}"
+          "-DCMAKE_CXX_FLAGS=${{ matrix.march }} -I${{ github.workspace }}/src/net/minecraft/src"
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build/gcc-release --parallel
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp bin/Release/OptiCraft.exe dist/OptiCraft-windows-${{ matrix.suffix }}-gcc.exe
+          tar -C dist -czf OptiCraft-windows-${{ matrix.suffix }}-gcc.tar.gz OptiCraft-windows-${{ matrix.suffix }}-gcc.exe
+        shell: bash
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opticraft-windows-${{ matrix.suffix }}-gcc
+          path: OptiCraft-windows-${{ matrix.suffix }}-gcc.tar.gz
+          if-no-files-found: error
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats || echo "ccache not available"
+        shell: bash
+
   # ── Windows 32-bit GCC / Legacy GCC (MinGW32 via MSYS2) ──────────────
   # The image's gcc is x86_64 and not multilib, so -m32 cannot produce
   # 32-bit binaries. MINGW32's i686 gcc is natively 32-bit; on it the
@@ -318,6 +411,79 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.exe }}.tar.gz
+          if-no-files-found: error
+
+  # ── Windows ARM64 GCC (MinGW-w64 via MSYS2 CLANGARM64) ──────────────
+  # No prebuilt GCC targets Windows ARM64 (the upstream aarch64-w64-mingw32
+  # GCC port ships no binaries and its C++ EH/TLS support is still
+  # incomplete), so the MinGW-w64/UCRT toolchain with clang in the gcc role
+  # is used -- the arrangement MSYS2 itself recommends for the windows-11-arm
+  # runner. Same shape as the Windows x86 MSYS2 job; -static mirrors the
+  # link flags the CMakeLists GNU branch adds, keeping the .exe standalone
+  # (static libc++/winpthread instead of runtime DLLs).
+  build-windows-arm64-gcc:
+    timeout-minutes: 45
+    name: Windows ARM64 GCC
+    runs-on: windows-11-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Clone SDL_net (pinned)
+        run: |
+          if not exist "external\SDL_net\CMakeLists.txt" (
+            echo Cloning SDL_net...
+            git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+            cd external\SDL_net
+            git fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+            git checkout FETCH_HEAD
+          ) else (
+            echo SDL_net already present
+          )
+        shell: cmd
+
+      - name: Setup MSYS2 (CLANGARM64 toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          path-type: minimal
+          update: true
+          install: >-
+            mingw-w64-clang-aarch64-clang
+            mingw-w64-clang-aarch64-libc++
+            mingw-w64-clang-aarch64-cmake
+            mingw-w64-clang-aarch64-ninja
+
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          cmake -B build/gcc-release -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MAKE_PROGRAM=ninja \
+            -DMC_LOG_LEVEL=2 \
+            "-DCMAKE_CXX_FLAGS=-I$(cygpath -m "$PWD")/src/net/minecraft/src" \
+            -DCMAKE_EXE_LINKER_FLAGS=-static
+
+      - name: Build
+        shell: msys2 {0}
+        run: cmake --build build/gcc-release --parallel
+
+      - name: Package
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist
+          cp bin/Release/OptiCraft.exe dist/OptiCraft-windows-arm64-gcc.exe
+          tar -C dist -czf OptiCraft-windows-arm64-gcc.tar.gz OptiCraft-windows-arm64-gcc.exe
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opticraft-windows-arm64-gcc
+          path: OptiCraft-windows-arm64-gcc.tar.gz
           if-no-files-found: error
 
   # ── Windows x64 MSVC ─────────────────────────────────────────────────
@@ -441,6 +607,105 @@ jobs:
         if: always()
         run: ccache --show-stats
 
+  # ── Linux GCC variants: native ARM64 + x86_64 micro-arch levels ─────
+  # Same steps as Linux x64 GCC; only the runner and the -march level
+  # differ. -march only selects code generation, so the Zen/x86_64-v3
+  # binaries are produced on the generic x64 runner -- the build host does
+  # not need that CPU, the resulting binary does. The ARM64 entry runs the
+  # identical steps natively on ubuntu-26.04-arm (arm64 joined
+  # archive.ubuntu.com in 26.04, so the stock sources work unchanged).
+  build-linux-gcc-variants:
+    timeout-minutes: 45
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux ARM64 GCC
+            runner: ubuntu-26.04-arm
+            suffix: arm64
+            march: ''
+          - name: Linux x86_64-v3 GCC
+            runner: ubuntu-26.04
+            suffix: x86_64-v3
+            march: '-march=x86-64-v3'
+          - name: Linux Zen 4 GCC
+            runner: ubuntu-26.04
+            suffix: zen4
+            march: '-march=znver4'
+          - name: Linux Zen 3 GCC
+            runner: ubuntu-26.04
+            suffix: zen3
+            march: '-march=znver3'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Clone SDL_net (pinned)
+        run: |
+          if [ ! -f external/SDL_net/CMakeLists.txt ]; then
+            echo "Cloning SDL_net..."
+            git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+            git -C external/SDL_net fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+            git -C external/SDL_net checkout FETCH_HEAD
+          else
+            echo "SDL_net already present"
+          fi
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache \
+            libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libasound2-dev
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ matrix.suffix }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-linux-${{ matrix.suffix }}-
+
+      - name: Configure ccache
+        run: ccache --max-size=2G && ccache --set-config=compression=true
+
+      - name: Configure
+        run: >
+          cmake -B build/gcc-release -G Ninja
+          -DCMAKE_C_COMPILER=gcc
+          -DCMAKE_CXX_COMPILER=g++
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_MAKE_PROGRAM=ninja
+          -DMC_LOG_LEVEL=2
+          "-DCMAKE_C_FLAGS=${{ matrix.march }}"
+          "-DCMAKE_CXX_FLAGS=${{ matrix.march }} -I$GITHUB_WORKSPACE/src/net/minecraft/src"
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build/gcc-release --parallel
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp bin/Release/OptiCraft dist/OptiCraft-linux-${{ matrix.suffix }}-gcc
+          tar -C dist -czf OptiCraft-linux-${{ matrix.suffix }}-gcc.tar.gz OptiCraft-linux-${{ matrix.suffix }}-gcc
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opticraft-linux-${{ matrix.suffix }}-gcc
+          path: OptiCraft-linux-${{ matrix.suffix }}-gcc.tar.gz
+          if-no-files-found: error
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
+
   # ── Linux 32-bit GCC ─────────────────────────────────────────────────
   # -m32 build (mirrors the gcc32-* presets). SDL video/audio backends that
   # would pick up the host's amd64 dev libraries are disabled explicitly so
@@ -526,6 +791,114 @@ jobs:
         with:
           name: opticraft-linux-x86-gcc
           path: OptiCraft-linux-x86-gcc.tar.gz
+          if-no-files-found: error
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats
+
+  # ── Linux ARMv7 (armhf) GCC, cross-compiled ─────────────────────────
+  # Mirrors the Linux x86 job: cross arm-linux-gnueabihf toolchain, SDL
+  # video/audio backends that would pick up the host's amd64 dev libraries
+  # are disabled explicitly, and OpenGL is pinned to the armhf runtime
+  # (linking against it is harmless to begin with -- glad resolves GL via
+  # dlopen, so no libGL symbols are referenced at link time). armhf packages
+  # still live on ports.ubuntu.com (only arm64 joined archive.ubuntu.com in
+  # 26.04), so an armhf ports source is added and the stock sources are
+  # restricted to the host arches; otherwise apt-get update 404s asking
+  # archive.ubuntu.com for armhf indices.
+  build-linux-armv7-gcc:
+    timeout-minutes: 45
+    name: Linux ARMv7 GCC
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Clone SDL_net (pinned)
+        run: |
+          if [ ! -f external/SDL_net/CMakeLists.txt ]; then
+            echo "Cloning SDL_net..."
+            git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+            git -C external/SDL_net fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+            git -C external/SDL_net checkout FETCH_HEAD
+          else
+            echo "SDL_net already present"
+          fi
+
+      - name: Enable armhf multiarch (ports) + install build tools
+        run: |
+          sudo dpkg --add-architecture armhf
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ] && \
+             ! grep -q '^Architectures:' /etc/apt/sources.list.d/ubuntu.sources; then
+            sudo awk '/^Types: deb/ { print; print "Architectures: amd64 i386"; next } { print }' \
+              /etc/apt/sources.list.d/ubuntu.sources > /tmp/ubuntu.sources
+            sudo mv /tmp/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          printf '%s\n' \
+            'Types: deb' \
+            'URIs: http://ports.ubuntu.com/ubuntu-ports' \
+            "Suites: $codename" \
+            'Components: main universe' \
+            'Architectures: armhf' \
+            'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.pgp' \
+            | sudo tee /etc/apt/sources.list.d/armhf-ports.sources
+          sudo apt-get update
+          sudo apt-get install -y g++-arm-linux-gnueabihf ninja-build ccache \
+            libgl-dev libgl1:armhf
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-armv7-${{ github.run_id }}
+          restore-keys: |
+            ccache-linux-armv7-
+
+      - name: Configure ccache
+        run: ccache --max-size=2G && ccache --set-config=compression=true
+
+      - name: Configure
+        run: >
+          cmake -B build/armv7-release -G Ninja
+          -DCMAKE_SYSTEM_NAME=Linux
+          -DCMAKE_SYSTEM_PROCESSOR=arm
+          -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc
+          -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_MAKE_PROGRAM=ninja
+          -DMC_LOG_LEVEL=2
+          "-DCMAKE_CXX_FLAGS=-I$GITHUB_WORKSPACE/src/net/minecraft/src"
+          -DOpenGL_GL_PREFERENCE=LEGACY
+          -DOPENGL_gl_LIBRARY=/usr/lib/arm-linux-gnueabihf/libGL.so.1
+          -DSDL_X11=OFF
+          -DSDL_WAYLAND=OFF
+          -DSDL_ALSA=OFF
+          -DSDL_PULSEAUDIO=OFF
+          -DSDL_UDEV=OFF
+          -DSDL_JACK=OFF
+          -DSDL_PIPEWIRE=OFF
+          -DSDL_SNDIO=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build/armv7-release --parallel
+
+      - name: Package
+        run: |
+          mkdir dist
+          cp bin/Release/OptiCraft dist/OptiCraft-linux-armv7-gcc
+          tar -C dist -czf OptiCraft-linux-armv7-gcc.tar.gz OptiCraft-linux-armv7-gcc
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opticraft-linux-armv7-gcc
+          path: OptiCraft-linux-armv7-gcc.tar.gz
           if-no-files-found: error
 
       - name: ccache stats
