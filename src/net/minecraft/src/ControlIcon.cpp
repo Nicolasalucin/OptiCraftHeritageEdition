@@ -26,8 +26,9 @@ ControlIcon controlIconTexture(Minecraft *mc, const std::string &label)
 #else
     constexpr const char *path = "/gui/buttons_wii.png";
     static constexpr Entry entries[] = {
-        {"1", 0}, {"2", 1}, {"Home", 2}, {"B", 3},
-        {"D-Pad", 4}, {"L", 5}, {"Z", 6}, {"Nun-Z", 6}, {"-", 7}, {"+", 8}
+        {"1", 0}, {"2", 1}, {"A", 2}, {"B", 3},
+        {"D-Pad", 4}, {"L", 5}, {"R", 6}, {"-", 7},
+        {"+", 8}, {"Z", 9}, {"Nun-Z", 9}
     };
 #endif
     int_t cell = -1;
