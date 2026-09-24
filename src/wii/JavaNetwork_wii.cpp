@@ -328,6 +328,7 @@ std::unique_ptr<std::istream> createInputStream(Socket &socket) { return std::ma
 std::unique_ptr<std::ostream> createOutputStream(Socket &socket) { return std::make_unique<SocketOutputStream>(socket); }
 
 
+
 bool readUrl(const std::string &, std::vector<unsigned char> &) { return false; }
 int getResponseCode(const std::string &) { return -1; }
 bool postUrl(const std::string &, const std::string &, const std::string &,

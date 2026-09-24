@@ -180,10 +180,10 @@ void GuiMultiplayer::saveServerList()
                     PlatformStorage::removeFile(temporary);
             }
         }
-        else{
-            
+        else
+        {
             saved = PlatformStorage::writeFile(destination, payload.data(), payload.size());
-            }
+        }
 
         if (!saved)
             throw std::runtime_error("Unable to write servers.dat");
@@ -750,4 +750,4 @@ void GuiMultiplayer::pollServer(const std::shared_ptr<ServerNBTStorage> &server)
         server->playerCount = resolvedCount;
     }
 #endif
-};
+}
